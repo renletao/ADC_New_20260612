@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """图形界面（tkinter）。由 wf280_tool.py 在无参数时调用。
 
-界面按产线实际流程组织：
-    手动设压 → 回读确认 → 跑各项 → 复测实际轨压
-一键「全套测试」把这几步串起来，单项命令留在下面备用。
+三块功能严格分开，互不串联：
+    ① 整机测试   固件 cmd[0] = 14，即 AllTestFor280 那条综合测试
+    ② 轨压回读   {1, 0x211}
+    ③ 单项命令   OTP / 输出测试 / 读系数 / 读 M1 / 设定电压
+
+“整机测试”就是 AllTestFor280 一条命令的异步执行，不会顺带跑其它命令。
 """
 
 from __future__ import annotations
@@ -17,9 +20,9 @@ from tkinter import ttk
 from mb_rtu import RtuMaster
 from wf280_proto import (
     COEFF_MAX,
+    FullTestResult,
     RailReading,
     Wf280Tester,
-    run_suite,
     status_text,
 )
 
@@ -32,7 +35,7 @@ ACCENT = "#1f6feb"
 OK_COLOR = "#1a7f37"
 NG_COLOR = "#cf222e"
 
-SUITE_STEPS = 8
+APP_VERSION = "v1.2 · 2026-11-08"
 
 
 class _Simple:
@@ -63,6 +66,7 @@ class TestApp:
         self._build_ui()
         self._refresh_ports()
         self._drain_queue()
+        self._poll_auto_rail()
 
     # ---------- 样式 ----------
 
@@ -78,13 +82,12 @@ class TestApp:
         style.configure("TLabel", background=BG, foreground=TEXT)
         style.configure("Card.TFrame", background=CARD)
         style.configure("Card.TLabel", background=CARD, foreground=TEXT)
+        style.configure("Card.TCheckbutton", background=CARD, foreground=TEXT)
         style.configure("Muted.TLabel", background=CARD, foreground=MUTED,
                         font=("Microsoft YaHei UI", 9))
         style.configure("Head.TLabel", background=CARD, foreground=TEXT,
                         font=("Microsoft YaHei UI", 11, "bold"))
-        style.configure("TButton", padding=(12, 6))
-        style.configure("Big.TButton", padding=(16, 8),
-                        font=("Microsoft YaHei UI", 10, "bold"))
+        style.configure("TButton", padding=(10, 5))
         style.configure("Treeview", background=CARD, fieldbackground=CARD,
                         foreground=TEXT, rowheight=25, borderwidth=0)
         style.configure("Treeview.Heading",
@@ -96,19 +99,21 @@ class TestApp:
     # ---------- 布局 ----------
 
     def _build_ui(self) -> None:
-        self.root.title("WF280 全功能测试工具")
+        self.root.title(f"WF280 全功能测试工具 {APP_VERSION}")
         self.root.configure(bg=BG)
-        self.root.geometry("940x880")
-        self.root.minsize(880, 780)
+        self.root.geometry("940x900")
+        self.root.minsize(880, 760)
 
         outer = ttk.Frame(self.root, padding=12)
         outer.pack(fill="both", expand=True)
         self._build_connection_bar(outer)
         self.info_label = ttk.Label(outer, text="未连接设备", foreground=MUTED)
         self.info_label.pack(fill="x", pady=(0, 8))
-        self._build_suite_card(outer)
+        self._build_full_card(outer)
+        self._build_rail_card(outer)
         self._build_item_card(outer)
         self._build_log(outer)
+        self._log(f"工具版本 {APP_VERSION}（窗口标题里也有，别开成旧的了）", "muted")
 
     def _build_connection_bar(self, parent) -> None:
         bar = ttk.Frame(parent)
@@ -160,13 +165,11 @@ class TestApp:
             tree.column(col, width=width, anchor="w")
         tree.tag_configure("ok", foreground=OK_COLOR)
         tree.tag_configure("ng", foreground=NG_COLOR)
-        tree.tag_configure("step", foreground=TEXT,
-                           font=("Microsoft YaHei UI", 9, "bold"))
         return tree
 
-    def _build_suite_card(self, parent) -> None:
-        card = self._card(parent, "全套测试",
-                          "设压 → 回读 → 整机 → 系数 → M1 → OTP → 输出 → 复测")
+    def _build_full_card(self, parent) -> None:
+        card = self._card(parent, "① 整机测试",
+                          "AllTestFor280    cmd[0] = 14    异步，走 IsTaskDone 队列")
 
         row = ttk.Frame(card, style="Card.TFrame")
         row.pack(fill="x", pady=(8, 6))
@@ -175,38 +178,45 @@ class TestApp:
         ttk.Entry(row, textvariable=self.voltage_var, width=7).pack(
             side="left", padx=(4, 2))
         ttk.Label(row, text="mV", style="Muted.TLabel").pack(side="left",
-                                                             padx=(0, 12))
+                                                                padx=(0, 8))
+        ttk.Button(row, text="设定电压", width=10,
+                   command=self._on_set_supply).pack(side="left", padx=(0, 14))
+        self.full_btn = ttk.Button(row, text="开始整机测试",
+                                   command=self._on_full_test)
+        self.full_btn.pack(side="left")
+        self.full_status = ttk.Label(row, text="待测", style="Card.TLabel")
+        self.full_status.pack(side="left", padx=(12, 0))
+        self.full_verdict = ttk.Label(row, text="", style="Card.TLabel",
+                                      font=("Microsoft YaHei UI", 11, "bold"))
+        self.full_verdict.pack(side="left", padx=(12, 0))
 
-        self.suite_btn = ttk.Button(row, text="▶  开始全套测试", style="Big.TButton",
-                                    command=self._on_suite)
-        self.suite_btn.pack(side="left")
+        self.full_tree = self._tree(card, 8)
+        self.full_tree.pack(fill="x")
 
-        ttk.Button(row, text="读取实际轨压",
-                   command=self._on_read_rail).pack(side="left", padx=(8, 12))
+    def _build_rail_card(self, parent) -> None:
+        card = self._card(parent, "② 轨压回读",
+                          "{1, 0x211}    同步，随时可读，不改变供电状态")
 
-        self.suite_status = ttk.Label(row, text="就绪", style="Card.TLabel")
-        self.suite_status.pack(side="left")
+        row = ttk.Frame(card, style="Card.TFrame")
+        row.pack(fill="x", pady=(8, 4))
+        self.rail_btn = ttk.Button(row, text="读取轨压", command=self._on_read_rail)
+        self.rail_btn.pack(side="left")
+        ttk.Checkbutton(row, text="连续监测（0.5 s）", variable=self._auto_rail_var(),
+                        style="Card.TCheckbutton").pack(side="left", padx=(12, 0))
 
-        rail_row = ttk.Frame(card, style="Card.TFrame")
-        rail_row.pack(fill="x", pady=(2, 6))
-        ttk.Label(rail_row, text="实际轨压", style="Card.TLabel").pack(side="left")
-        self.rail_value = tk.Label(rail_row, text="----", bg=CARD, fg=MUTED,
-                                   font=("Consolas", 22, "bold"))
-        self.rail_value.pack(side="left", padx=(10, 10))
-        self.rail_verdict = ttk.Label(rail_row, text="尚未读取", style="Muted.TLabel")
-        self.rail_verdict.pack(side="left")
+        self.rail_value = tk.Label(card, text="----", bg=CARD, fg=MUTED,
+                                   font=("Consolas", 20, "bold"))
+        self.rail_value.pack(side="left", padx=(12, 0))
+        self.rail_verdict = ttk.Label(card, text="尚未读取", style="Muted.TLabel")
+        self.rail_verdict.pack(side="left", padx=(8, 0))
 
-        self.suite_tree = self._tree(card, 7)
-        self.suite_tree.pack(fill="x")
-
-        foot = ttk.Frame(card, style="Card.TFrame")
-        foot.pack(fill="x", pady=(6, 0))
-        self.verdict_label = ttk.Label(foot, text="总判定：—", style="Card.TLabel",
-                                       font=("Microsoft YaHei UI", 11, "bold"))
-        self.verdict_label.pack(side="left")
+    def _auto_rail_var(self) -> tk.BooleanVar:
+        if not hasattr(self, "auto_rail"):
+            self.auto_rail = tk.BooleanVar(value=False)
+        return self.auto_rail
 
     def _build_item_card(self, parent) -> None:
-        card = self._card(parent, "单项命令", "需要单独测某一项时用")
+        card = self._card(parent, "③ 单项命令", "单独测某一项时用，跑完不影响其它项")
 
         row = ttk.Frame(card, style="Card.TFrame")
         row.pack(fill="x", pady=(8, 6))
@@ -227,13 +237,17 @@ class TestApp:
 
         btns = ttk.Frame(card, style="Card.TFrame")
         btns.pack(fill="x", pady=(0, 6))
-        for text, action in (("设定电压", "vdd"), ("OTP 校验", "otp"),
+        for text, action in (("OTP 校验", "otp"),
                              ("输出 3.3 V", "out33"), ("输出 2.0 V", "out20"),
-                             ("读系数", "coeff"), ("读 M1", "m1"),
-                             ("整机测试", "full")):
+                             ("读系数", "coeff"), ("读 M1", "m1")):
             ttk.Button(btns, text=text,
                        command=lambda a=action: self._on_cmd(a)).pack(
                 side="left", padx=(0, 6))
+
+        setrow = ttk.Frame(card, style="Card.TFrame")
+        setrow.pack(fill="x", pady=(0, 6))
+        ttk.Label(setrow, text="提示：整机测试用的电压在 ① 里设定，"
+                  "这里各命令按各自的固定电压执行", style="Muted.TLabel").pack(side="left")
 
         self.item_tree = self._tree(card, 4)
         self.item_tree.pack(fill="x")
@@ -279,12 +293,29 @@ class TestApp:
     def _refresh_ports(self) -> None:
         try:
             from serial.tools import list_ports
-            ports = [p.device for p in list_ports.comports()]
+            infos = list(list_ports.comports())
         except Exception:
-            ports = []
+            infos = []
+
+        def score(port) -> int:
+            """接板子的 USB 转串口优先，调试器/蓝牙靠后。"""
+            text = f"{port.device} {port.description}".lower()
+            if "jlink" in text or "segger" in text:
+                return -10
+            if "ch340" in text or "usb-serial" in text or "cp210" in text \
+                    or "ft232" in text or "usb serial" in text:
+                return 10
+            if "蓝牙" in text or "bluetooth" in text:
+                return -5
+            return 0
+
+        infos.sort(key=score, reverse=True)
+        ports = [p.device for p in infos]
         self.port_box["values"] = ports
-        if ports and not self.port_var.get():
+        if ports and (not self.port_var.get() or self.port_var.get() not in ports):
             self.port_var.set(ports[0])
+            desc = next((p.description for p in infos if p.device == ports[0]), "")
+            self._log(f"默认选中 {ports[0]}（{desc}），不对的话手动改", "muted")
         if not ports:
             self.port_var.set("")
             self._log("没有检测到串口，插好 USB 转串口后点「刷新」", "muted")
@@ -380,7 +411,7 @@ class TestApp:
             while True:
                 kind, payload, args = self._queue.get_nowait()
                 if kind == "status":
-                    self.suite_status.configure(text=payload, foreground=ACCENT)
+                    self.full_status.configure(text=payload, foreground=ACCENT)
                     continue
                 if kind == "rail":
                     self._show_rail(payload)
@@ -396,11 +427,11 @@ class TestApp:
 
     # ---------- 表格 ----------
 
-    def _show_rows(self, tree: ttk.Treeview, rows) -> None:
+    def _show_rows(self, tree: ttk.Treeview, rows, skip=None) -> None:
+        if skip:
+            rows = [r for r in rows if r[0] not in skip]
         for item, value, verdict in rows:
-            if verdict.startswith("【"):
-                tag = "step"
-            elif verdict == "OK":
+            if verdict == "OK":
                 tag = "ok"
             elif verdict.startswith("NG") or "未" in verdict or "偏离" in verdict:
                 tag = "ng"
@@ -440,56 +471,55 @@ class TestApp:
             return None
         return mv
 
-    # ---------- 全套测试 ----------
+    # ---------- ① 整机测试（AllTestFor280）----------
 
-    def _on_suite(self) -> None:
+    def _on_full_test(self) -> None:
         if self.tester is None:
             self._log("请先连接串口", "err")
             return
         mv = self._voltage()
         if mv is None:
             return
-
-        self.suite_btn.configure(state="disabled")
-        for item in self.suite_tree.get_children():
-            self.suite_tree.delete(item)
-        self.verdict_label.configure(text="总判定：测试中…", foreground=ACCENT)
-        self._log(f"开始全套测试，设定电压 {mv} mV")
-
-        tester = self.tester
-
-        def step_cb(n: int, name: str) -> None:
-            self._post_status(f"第 {n}/{SUITE_STEPS} 步：{name}")
-
-        def tick_cb(elapsed: float) -> None:
-            self._post_status(f"第 3/{SUITE_STEPS} 步：整机测试运行中 {elapsed:.0f} s")
+        self.full_btn.configure(state="disabled")
+        self.full_status.configure(text="测试中…", foreground=ACCENT)
+        self.full_verdict.configure(text="")
+        for item in self.full_tree.get_children():
+            self.full_tree.delete(item)
+        self._log(f"设定电压 {mv} mV → 触发整机测试 cmd[0]=14（AllTestFor280）")
 
         def work():
-            return run_suite(tester, mv, on_step=step_cb, on_rail=self._post_rail,
-                             on_tick=tick_cb)
+            # 先设压：固件收到 {1,0x201} 后会把这次的值记下来，
+            # 随后 AllTestFor280 就按这个电压供电。
+            self.tester.set_supply(mv)
+            time.sleep(0.3)
+            return self.tester.run_full_test(on_tick=lambda e: self._post_status(
+                f"测试中… {e:.1f} s"))
 
         def done(result, error):
-            self.suite_btn.configure(state="normal")
-            self.suite_status.configure(text="就绪", foreground=MUTED)
+            self.full_btn.configure(state="normal")
+            self.full_status.configure(text="完成", foreground=MUTED)
             if error:
-                self.verdict_label.configure(text="总判定：测试中断",
-                                             foreground=NG_COLOR)
-                self._log(f"全套测试中断：{error}", "err")
+                self.full_verdict.configure(text="中断", foreground=NG_COLOR)
+                self._log(f"整机测试失败：{error}", "err")
                 return
-            rows, ok = result
-            self._show_rows(self.suite_tree, rows)
-            if ok:
-                self.verdict_label.configure(text="总判定：PASS",
-                                             foreground=OK_COLOR)
-                self._log("全套测试完成：PASS", "ok")
-            else:
-                self.verdict_label.configure(text="总判定：NG",
-                                             foreground=NG_COLOR)
-                self._log("全套测试完成：NG，看表格里标红的项", "err")
+            self._show_full_result(result)
 
         self._run_async(work, done)
 
-    # ---------- 轨压 ----------
+    def _show_full_result(self, result: FullTestResult) -> None:
+        self._show_rows(self.full_tree, result.rows())
+        if result.all_ok:
+            self.full_verdict.configure(text="PASS", foreground=OK_COLOR)
+            self._log(f"AllTestFor280 完成：PASS，设定 {result.rail_set_mv} mV / "
+                      f"实测 {result.rail_mv} mV，工作 {result.work_ua} uA / "
+                      f"休眠 {result.sleep_ua} uA", "ok")
+        else:
+            self.full_verdict.configure(
+                text=f"NG（{status_text(result.status)}）", foreground=NG_COLOR)
+            self._log(f"AllTestFor280 完成：NG，{status_text(result.status)}，"
+                      f"设定 {result.rail_set_mv} mV / 实测 {result.rail_mv} mV", "err")
+
+    # ---------- ② 轨压 ----------
 
     def _on_read_rail(self) -> None:
         if self.tester is None:
@@ -507,7 +537,12 @@ class TestApp:
                                   fg=OK_COLOR if result.ok else NG_COLOR)
         self.rail_verdict.configure(text=result.verdict)
 
-    # ---------- 单项命令 ----------
+    def _poll_auto_rail(self) -> None:
+        if self.auto_rail.get() and self.tester is not None and not self.busy:
+            self._on_read_rail()
+        self.root.after(500, self._poll_auto_rail)
+
+    # ---------- ③ 单项命令 ----------
 
     def _on_cmd(self, action: str) -> None:
         if self.tester is None:
@@ -518,32 +553,16 @@ class TestApp:
             return
         measurement, settle, count = params
 
-        if action == "full":
-            label = "整机测试"
-
-            def work():
-                return self.tester.run_full_test(
-                    on_tick=lambda e: self._post_status(f"整机测试运行中 {e:.0f} s"))
-        elif action == "vdd":
-            mv = self._voltage()
-            if mv is None:
-                return
-            label = f"设定电压 {mv} mV"
-
-            def work():
-                return _Simple(self.tester.set_supply(mv))
-        else:
-            jobs = {
-                "otp": ("OTP 校验", lambda: self.tester.read_otp()),
-                "out33": (f"输出 3.3 V（{measurement:#06x} / {settle} ms）",
-                          lambda: self.tester.test_output_3v3(measurement, settle)),
-                "out20": (f"输出 2.0 V（{measurement:#06x} / {settle} ms）",
-                          lambda: self.tester.test_output_2v0(measurement, settle)),
-                "coeff": (f"读系数（{count} 路）",
-                          lambda: self.tester.read_coeff(count)),
-                "m1": (f"读 M1（{count} 路）", lambda: self.tester.read_m1(count)),
-            }
-            label, work = jobs[action]
+        jobs = {
+            "otp": ("OTP 校验", lambda: self.tester.read_otp()),
+            "out33": (f"输出 3.3 V（{measurement:#06x} / {settle} ms）",
+                      lambda: self.tester.test_output_3v3(measurement, settle)),
+            "out20": (f"输出 2.0 V（{measurement:#06x} / {settle} ms）",
+                      lambda: self.tester.test_output_2v0(measurement, settle)),
+            "coeff": (f"读系数（{count} 路）", lambda: self.tester.read_coeff(count)),
+            "m1": (f"读 M1（{count} 路）", lambda: self.tester.read_m1(count)),
+        }
+        label, work = jobs[action]
 
         for item in self.item_tree.get_children():
             self.item_tree.delete(item)
@@ -551,7 +570,6 @@ class TestApp:
         self._run_async(work, lambda r, e: self._show_cmd(label, r, e))
 
     def _show_cmd(self, label: str, result, error) -> None:
-        self.suite_status.configure(text="就绪", foreground=MUTED)
         if error:
             self._log(f"{label} 失败：{error}", "err")
             return
@@ -560,6 +578,27 @@ class TestApp:
             self._log(f"{label} 完成：OK", "ok")
         else:
             self._log(f"{label} 完成：NG", "err")
+
+    def _on_set_supply(self) -> None:
+        if self.tester is None:
+            self._log("请先连接串口", "err")
+            return
+        mv = self._voltage()
+        if mv is None:
+            return
+        self._log(f"设定轨压 {mv} mV（整机测试也会用这个值）")
+        self._run_async(lambda: _Simple(self.tester.set_supply(mv)),
+                        lambda r, e: self._show_set_supply(mv, r, e))
+
+    def _show_set_supply(self, mv: int, result, error) -> None:
+        if error:
+            self._log(f"设定电压失败：{error}", "err")
+            return
+        if result.ok:
+            self.full_status.configure(text=f"已设压 {mv} mV", foreground=MUTED)
+            self._log(f"轨压已设为 {mv} mV", "ok")
+        else:
+            self._log(f"设定电压失败：{status_text(result.status)}", "err")
 
     def _on_read_version(self) -> None:
         if self.tester is None:

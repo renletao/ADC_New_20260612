@@ -241,17 +241,18 @@ def _():
     assert raw_to_ua(0xFFFD29AE, 0) == 0    # 没轨压不换算
 
 
-@case("电流换算：固件返回 0 时表格给出推算值")
+@case("电流显示：按原始码算出实际值，不标“推算”")
 def _():
     result = FullTestResult([0] * 32)
     result.regs[1] = 3296          # 实测轨压
-    result.regs[4] = 0             # 固件给的工作电流 0
+    result.regs[4] = 0             # 固件给的工作电流 0（小于 1 uA 会被截断）
     for i, byte in enumerate(b"\xAE\x29\xFD\xFF"):
         result.regs[6 + i] = byte
     texts = {row[0]: row for row in result.rows()}
-    assert "工作电流（推算）" in texts, list(texts)
-    value = float(texts["工作电流（推算）"][1].split()[0])
+    assert "工作电流" in texts, list(texts)
+    value = float(texts["工作电流"][1].split()[0])
     assert 605 <= value <= 612, value
+    assert not any("推算" in name for name in texts), list(texts)
 
 
 @case("CRC16 标准向量")

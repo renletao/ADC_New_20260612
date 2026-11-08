@@ -33,7 +33,7 @@ import argparse
 import sys
 
 from mb_rtu import ModbusError, RtuMaster
-from wf280_proto import Wf280Tester, run_suite, status_text
+from wf280_proto import Wf280Tester, status_text
 
 
 def _print_result(label: str, result) -> None:
@@ -61,18 +61,32 @@ def cli(argv: list[str]) -> int:
     parser.add_argument("--mv", type=int, default=3300,
                         help="设定轨压毫伏值，默认 3300")
     parser.add_argument("cmd", choices=[
-        "suite", "version", "full", "rail", "otp", "out33", "out20", "coeff",
+        "version", "full", "rail", "otp", "out33", "out20", "coeff",
         "m1", "vdd", "ports",
-    ], help="要执行的测试项（suite = 全套流程）")
+    ], help="要执行的测试项（full = 整机测试 cmd[0]=14）")
     args = parser.parse_args(argv)
 
     if args.cmd == "ports":
         from serial.tools import list_ports
         ports = list(list_ports.comports())
+
+        def score(port) -> int:
+            text = f"{port.device} {port.description}".lower()
+            if "jlink" in text or "segger" in text:
+                return -10
+            if "ch340" in text or "usb-serial" in text or "cp210" in text \
+                    or "ft232" in text or "usb serial" in text:
+                return 10
+            if "蓝牙" in text or "bluetooth" in text:
+                return -5
+            return 0
+
+        ports.sort(key=score, reverse=True)
         if not ports:
             print("没有检测到串口")
-        for p in ports:
-            print(f"{p.device}\t{p.description}")
+        for i, p in enumerate(ports):
+            hint = "\t<= 大概率是板子" if i == 0 and score(p) > 0 else ""
+            print(f"{p.device}\t{p.description}{hint}")
         return 0
 
     if not args.port:
@@ -97,19 +111,6 @@ def cli(argv: list[str]) -> int:
 
             if not version.ok:
                 print("警告: 读到的版本号是 0.0，设备可能没有正常应答", file=sys.stderr)
-
-            if args.cmd == "suite":
-                print(f"设备固件: {version.text}，全套测试设定电压 {args.mv} mV")
-
-                def on_step(n: int, name: str) -> None:
-                    print(f"第 {n}/8 步：{name}", flush=True)
-
-                rows, ok = run_suite(tester, args.mv, on_step=on_step)
-                print()
-                for item, value, verdict in rows:
-                    print(f"{item:<28}{value:<32}{verdict}")
-                print("\n总判定:", "PASS" if ok else "NG")
-                return 0 if ok else 1
 
             if args.cmd == "full":
                 print(f"设备固件: {version.text}")
