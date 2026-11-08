@@ -169,7 +169,7 @@ class TestApp:
 
     def _build_full_card(self, parent) -> None:
         card = self._card(parent, "① 整机测试",
-                          "AllTestFor280    cmd[0] = 14    异步，轨压固定 3.3 V")
+                          "AllTestFor280    cmd[0] = 14    异步，轨压按设定值")
 
         row = ttk.Frame(card, style="Card.TFrame")
         row.pack(fill="x", pady=(8, 6))
@@ -493,15 +493,21 @@ class TestApp:
         if self.tester is None:
             self._log("请先连接串口", "err")
             return
+        mv = self._voltage()
+        if mv is None:
+            return
         self.full_btn.configure(state="disabled")
         self.full_status.configure(text="测试中…", foreground=ACCENT)
         self.full_verdict.configure(text="")
         for item in self.full_tree.get_children():
             self.full_tree.delete(item)
-        self._log("触发整机测试 cmd[0]=14（AllTestFor280，轨压固定 3.3 V）")
+        self._log(f"设定电压 {mv} mV → 触发整机测试 cmd[0]=14（AllTestFor280）")
 
         def work():
-            # 整机测试的轨压由固件固定为 3300 mV，这里不再先发 0x201。
+            # 先设压：固件收到 {1,0x201} 后会把这次的值记下来，
+            # 随后 AllTestFor280 就按这个电压供电。
+            self.tester.set_supply(mv)
+            time.sleep(0.3)
             return self.tester.run_full_test(on_tick=lambda e: self._post_status(
                 f"测试中… {e:.1f} s"))
 
