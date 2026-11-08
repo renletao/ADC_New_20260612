@@ -1,0 +1,35 @@
+# ===== Keil MDK 编译输出（可随时重新生成，不入库）=====
+MDK-ARM/ADC/
+MDK-ARM/Objects/
+MDK-ARM/Listings/
+*.o
+*.d
+*.crf
+*.axf
+*.hex
+*.bin
+*.elf
+*.map
+*.lnp
+*.lst
+*.dep
+*.build_log.htm
+*.htm
+*.iex
+EventRecorderStub.scvd
+
+# ===== Keil 用户个人配置（每台机器不同，不入库）=====
+*.uvguix.*
+*.uvopt.bak
+*.uvprojx.bak
+JLinkLog.txt
+JLinkSettings.ini
+*.dbgconf.bak
+
+# ===== 其他临时文件 =====
+*.bak
+*.tmp
+*.log
+Thumbs.db
+desktop.ini
+.DS_Store
