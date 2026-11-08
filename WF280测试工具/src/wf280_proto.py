@@ -458,3 +458,85 @@ class Wf280Tester:
         mv = max(0, min(5000, int(mv)))
         out = self._command([1, CMD_SET_VDD, mv & 0xFF, (mv >> 8) & 0xFF], 1)
         return out[0]
+
+
+# ---------------- 全套测试流程 ----------------
+
+
+def run_suite(tester: Wf280Tester, mv: int, *, on_step=None, on_rail=None,
+              on_tick=None, coeff_count: int = 4):
+    """按产线流程跑一遍：设压 → 回读 → 整机 → 系数 → M1 → OTP → 输出 → 复测。
+
+    返回 (rows, ok)，rows 是 (项目, 数值, 判定) 三元组列表，
+    界面和命令行都直接拿去显示。
+
+    on_step(n, name)    每一步开始时回调
+    on_rail(reading)    每次回读轨压后回调
+    on_tick(elapsed)    整机测试轮询时回调（用户可以看着秒数）
+    """
+    rows: list[tuple[str, str, str]] = []
+    oks: list[bool] = []
+
+    def step(n: int, name: str) -> None:
+        if on_step:
+            on_step(n, name)
+        rows.append((f"{n}. {name}", "", "【步骤】"))
+
+    # ① 设定电压
+    step(1, f"设定电压 {mv} mV")
+    status = tester.set_supply(mv)
+    oks.append(status == 0)
+    rows.append(("   写入结果", status_text(status),
+                 "OK" if status == 0 else "NG"))
+    time.sleep(0.35)
+
+    # ② 回读实际轨压
+    step(2, "回读实际轨压")
+    rail = tester.read_rail()
+    oks.append(rail.ok)
+    rows.extend(("   " + a, b, c) for a, b, c in rail.rows())
+    if on_rail:
+        on_rail(rail)
+
+    # ③ 整机测试（固件里电压固定 3300 mV，上位机改不了）
+    step(3, "整机测试（固件固定 3300 mV）")
+    full = tester.run_full_test(on_tick=on_tick)
+    oks.append(full.all_ok)
+    rows.extend(("   " + a, b, c) for a, b, c in full.rows())
+
+    # ④ 读系数
+    step(4, f"读系数（{coeff_count} 路）")
+    coeff = tester.read_coeff(coeff_count)
+    oks.append(coeff.ok)
+    rows.extend(("   " + a, b, c) for a, b, c in coeff.rows())
+
+    # ⑤ 读 M1
+    step(5, f"读 M1（{coeff_count} 路）")
+    m1 = tester.read_m1(coeff_count)
+    oks.append(m1.ok)
+    rows.extend(("   " + a, b, c) for a, b, c in m1.rows())
+
+    # ⑥ OTP 校验
+    step(6, "OTP 校验")
+    otp = tester.read_otp()
+    oks.append(otp.ok)
+    rows.extend(("   " + a, b, c) for a, b, c in otp.rows())
+
+    # ⑦ 输出测试：按设定电压选档位
+    supply = 2000 if mv <= 2650 else 3300
+    step(7, f"输出测试 {supply} mV")
+    out = tester.test_output(supply, 0, None)
+    oks.append(out.ok)
+    rows.extend(("   " + a, b, c) for a, b, c in out.rows())
+
+    # ⑧ 复测：前面几项测完都会断电，重新设压再读一次实际值
+    step(8, "复测实际轨压")
+    status = tester.set_supply(mv)
+    time.sleep(0.35)
+    final = tester.read_rail()
+    oks.append(status == 0 and final.ok)
+    rows.extend(("   " + a, b, c) for a, b, c in final.rows())
+    if on_rail:
+        on_rail(final)
+
+    return rows, all(oks)
