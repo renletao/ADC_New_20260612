@@ -266,8 +266,15 @@ def _():
     fake, tester = make_tester(rail_mv=3298)
     reading = tester.read_rail()
     assert (reading.status, reading.mv) == (0, 3298)
-    assert reading.ok and reading.verdict == "正常"
+    assert reading.ok and "3.3 V" in reading.verdict, reading.verdict
     assert fake.commands_seen[-1] == [1, 0x211]
+
+
+@case("0x211 轨压：2.0 V 档同样判为正常")
+def _():
+    _, tester = make_tester(rail_mv=1992)
+    reading = tester.read_rail()
+    assert reading.ok and "2.0 V" in reading.verdict, reading.verdict
 
 
 @case("0x211 轨压：轨没起来")

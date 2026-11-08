@@ -50,6 +50,9 @@ COEFF_MAX = 32                # WF280_COEFF_MAX
 RAIL_MIN_MV = 1500
 RAIL_TOLERANCE_PCT = 10
 TEST_RAIL_MV = 3300
+# 这块板有两个档位：正常 bank 用 3.3 V，M1 bank 用 2.0 V，
+# 回读判定两个都认，否则单独测 2.0 V 时会被误判成超差。
+RAIL_LEVELS = ((3300, "3.3 V"), (2000, "2.0 V"))
 SHORT_CURRENT_UA = 20000
 # 固件里 3.3 V 用 20 ms、2.0 V 用 200 ms，但那是整机测试里轨已经稳了的前提。
 # 单独发一条输出测试命令时轨是冷的，实测 20 ms 会报「NOR 忙等超时」，
@@ -213,11 +216,14 @@ class RailReading(Result):
             return status_text(self.status)
         if self.mv < RAIL_MIN_MV:
             return f"轨未建立（{self.mv} mV < {RAIL_MIN_MV} mV）"
-        low = TEST_RAIL_MV * (100 - RAIL_TOLERANCE_PCT) // 100
-        high = TEST_RAIL_MV * (100 + RAIL_TOLERANCE_PCT) // 100
-        if not low <= self.mv <= high:
-            return f"偏离 ±{RAIL_TOLERANCE_PCT}%（正常 {low}~{high} mV）"
-        return "正常"
+        for level, name in RAIL_LEVELS:
+            low = level * (100 - RAIL_TOLERANCE_PCT) // 100
+            high = level * (100 + RAIL_TOLERANCE_PCT) // 100
+            if low <= self.mv <= high:
+                return f"正常（{name} 档）"
+        ranges = "、".join(f"{lv}±{RAIL_TOLERANCE_PCT}%"
+                           for lv, _ in RAIL_LEVELS)
+        return f"不在正常档位（{ranges} mV）"
 
     def rows(self):
         return [("轨压（实测）", f"{self.mv} mV", self.verdict),
