@@ -1,0 +1,8 @@
+# 打包中间产物，不入库
+build/
+dist/
+*.spec
+
+# Python 缓存
+__pycache__/
+*.pyc

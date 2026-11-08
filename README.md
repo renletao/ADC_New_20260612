@@ -14,7 +14,7 @@ STM32CubeMX 生成 + Keil MDK 编译。
 | `MDK-ARM/` | Keil 工程：`ADC.uvprojx`（工程文件）、`ADC.uvoptx`、启动文件 |
 | `tests/` | Python 测试脚本 |
 | `多功能小板测试-多路电压/` | 上位机测试工具（已编译，exe + 依赖库） |
-| `WF280测试工具/` | WF280 全功能测试上位机（Python 源码，覆盖全部 7 条命令） |
+| `WF280测试工具/` | WF280 全功能测试上位机（双击 exe 即可，覆盖 9 条命令，源码在 `src/`） |
 | `Schematic.png` | 原理图 |
 | `ads1220.pdf` | ADS1220 数据手册 |
 
