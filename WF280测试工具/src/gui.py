@@ -220,8 +220,9 @@ class TestApp:
         self.rail_verdict.pack(side="left", padx=(8, 0))
 
         ttk.Label(card,
-                  text="提示：整机测试 / 输出测试 / 读系数 / 读 M1 结束时都会断电，"
-                       "所以单点「读取轨压」常看到接近 0 mV，这是正常的；"
+                  text="提示：输出测试正常结束后会保持供电，可直接点「读取轨压」；"
+                       "整机测试 / 读系数 / 读 M1 结束时仍会断电，"
+                       "这时单点「读取轨压」看到接近 0 mV 是正常的，"
                        "要看带电轨压请用「设压并回读」。",
                   style="Muted.TLabel", wraplength=860).pack(anchor="w", pady=(2, 0))
 
