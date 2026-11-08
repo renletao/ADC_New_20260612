@@ -25,6 +25,7 @@ from mb_rtu import HOLDING_BASE, INPUT_BASE, RtuMaster
 # ---------------- 命令码（与 CmdHelper.h 一致）----------------
 
 CMD_SET_VDD = 0x201           # {1, 0x201, lo, hi}
+CMD_GET_VERSION = 0x104       # {1, 0x104}    固件版本号
 CMD_WF280_M1 = 0x207          # {1, 0x207, count}
 CMD_WF280_OUTDATA = 0x208     # {1, 0x208, measurement, settle_ms}
 CMD_WF280_COEFF = 0x209       # {1, 0x209, count}
@@ -84,6 +85,30 @@ class Result:
 
     def rows(self) -> list[tuple[str, str, str]]:  # pragma: no cover
         raise NotImplementedError
+
+
+# ---------------- ⓪ 固件版本 ----------------
+
+
+@dataclass
+class VersionResult(Result):
+    """{1, 0x104}：FIRMWARE_VERSION 两字节，高字节是主版本。"""
+
+    major: int
+    minor: int
+
+    @property
+    def ok(self) -> bool:
+        # 全 0 基本可以断定设备没真正应答
+        return not (self.major == 0 and self.minor == 0)
+
+    @property
+    def text(self) -> str:
+        return f"v{self.major}.{self.minor}"
+
+    def rows(self):
+        return [("固件版本", self.text, "OK" if self.ok else "NG"),
+                ("原始值", f"0x{self.major:02X} 0x{self.minor:02X}", "—")]
 
 
 # ---------------- ① 整机测试 ----------------
@@ -309,6 +334,11 @@ class Wf280Tester:
         if read_count <= 0:
             return []
         return self.master.read_input_registers(self.in_addr, read_count)
+
+    # ---- ⓪ 固件版本 ----
+    def read_version(self) -> VersionResult:
+        out = self._command([1, CMD_GET_VERSION], 2)
+        return VersionResult(major=out[0], minor=out[1])
 
     # ---- ① 异步整机测试 ----
     def get_task_status(self) -> int:

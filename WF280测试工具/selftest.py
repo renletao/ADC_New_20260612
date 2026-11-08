@@ -31,7 +31,7 @@ class FakeFirmwareSerial:
     """假串口：收到主站帧就按固件逻辑生成应答。"""
 
     def __init__(self, *, rail_mv=3298, busy_polls=3, stuck=False,
-                 otp_fail=0):
+                 otp_fail=0, version=(1, 0)):
         self.is_open = True
         self.rx = bytearray()
         self.tx_buffer = bytearray()
@@ -39,6 +39,7 @@ class FakeFirmwareSerial:
         self.busy_polls = busy_polls
         self.stuck = stuck
         self.otp_fail = otp_fail          # 0=通过，非 0=第几路失败
+        self.version = version
         self.busy = False
         self.send_buf = [0] * 120
         self.commands_seen: list[list[int]] = []
@@ -167,6 +168,11 @@ class FakeFirmwareSerial:
                 self.send_buf[0] = 0xE2
             return
 
+        if head == 0x104:                     # 固件版本
+            self.send_buf[0] = self.version[0]
+            self.send_buf[1] = self.version[1]
+            return
+
         if head == 0x201:                     # 设定 DAC 轨压
             self.supply_mv = cmd[2] | (cmd[3] << 8)
             self.send_buf[0] = 0
@@ -219,6 +225,18 @@ def _():
     # “01 03 00 00 00 01” 的 Modbus CRC = 0x0A84，线上低字节在前 84 0A
     assert mb_rtu.crc16(bytes([1, 3, 0, 0, 0, 1])) == 0x0A84
     assert mb_rtu.with_crc(bytes([1, 3, 0, 0, 0, 1]))[-2:] == b"\x84\x0a"
+
+
+@case("0x104 固件版本：读得到才算连对设备")
+def _():
+    fake, tester = make_tester(version=(1, 0))
+    result = tester.read_version()
+    assert fake.commands_seen[-1] == [1, 0x104]
+    assert result.text == "v1.0" and result.ok
+
+    # 全 0 视为设备没正常应答
+    _, blank = make_tester(version=(0, 0))
+    assert not blank.read_version().ok
 
 
 @case("0x211 轨压：状态 + mV")

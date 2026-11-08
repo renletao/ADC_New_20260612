@@ -13,6 +13,7 @@
 
 用法：
     python wf280_tool.py                             图形界面
+    python wf280_tool.py --port COM5 version         读固件版本
     python wf280_tool.py --port COM5 full            整机测试
     python wf280_tool.py --port COM5 rail            读轨压
     python wf280_tool.py --port COM5 otp             OTP 校验
@@ -60,7 +61,8 @@ def cli(argv: list[str]) -> int:
     parser.add_argument("--mv", type=int, default=3300,
                         help="设定轨压毫伏值，默认 3300")
     parser.add_argument("cmd", choices=[
-        "full", "rail", "otp", "out33", "out20", "coeff", "m1", "vdd", "ports",
+        "version", "full", "rail", "otp", "out33", "out20", "coeff", "m1",
+        "vdd", "ports",
     ], help="要执行的测试项")
     args = parser.parse_args(argv)
 
@@ -85,7 +87,17 @@ def cli(argv: list[str]) -> int:
         with RtuMaster(args.port, baudrate=args.baud, slave=args.slave) as master:
             tester = Wf280Tester(master)
 
+            version = tester.read_version()
+
+            if args.cmd == "version":
+                _print_result("固件版本", version)
+                return 0 if version.ok else 1
+
+            if not version.ok:
+                print("警告: 读到的版本号是 0.0，设备可能没有正常应答", file=sys.stderr)
+
             if args.cmd == "full":
+                print(f"设备固件: {version.text}")
                 print("触发整机测试（cmd=14）…", flush=True)
                 result = tester.run_full_test(timeout=args.timeout)
                 _print_result("WF280 整机测试", result)

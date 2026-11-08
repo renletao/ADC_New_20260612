@@ -38,6 +38,8 @@ class TestApp:
         self.tester: Wf280Tester | None = None
         self.busy = False
         self.auto_rail = tk.BooleanVar(value=False)
+        self.version_text = "未知"
+        self.device_info = ""
         self._queue: queue.Queue = queue.Queue()
 
         self._build_style()
@@ -85,6 +87,9 @@ class TestApp:
         outer = ttk.Frame(self.root, padding=14)
         outer.pack(fill="both", expand=True)
         self._build_connection_bar(outer)
+        self.info_label = ttk.Label(outer, text="未连接设备",
+                                    foreground=MUTED)
+        self.info_label.pack(fill="x", pady=(0, 10))
         self._build_full_test_card(outer)
         self._build_rail_card(outer)
         self._build_cmd_card(outer)
@@ -114,6 +119,9 @@ class TestApp:
 
         self.connect_btn = ttk.Button(bar, text="连接", command=self._toggle_connect)
         self.connect_btn.pack(side="left", padx=(16, 8))
+        self.version_btn = ttk.Button(bar, text="读版本", width=8,
+                                      command=self._on_read_version, state="disabled")
+        self.version_btn.pack(side="left", padx=(0, 8))
         self.conn_label = ttk.Label(bar, text="未连接", foreground=MUTED)
         self.conn_label.pack(side="left")
 
@@ -278,29 +286,67 @@ class TestApp:
             return
         self.tester = Wf280Tester(self.master)
         self.connect_btn.configure(text="断开")
+        self.version_btn.configure(state="normal")
         self.conn_label.configure(text=f"已连接 {port} @ {baud}",
                                   foreground=OK_COLOR)
+        self.device_info = f"{port} · {baud} 8N1 · 从机 {slave}"
+        self.info_label.configure(text=f"{self.device_info} · 正在读取版本…",
+                                  foreground=MUTED)
         self._log(f"已连接 {port}，{baud} 8N1，从机 {slave}", "ok")
 
         def work():
-            return self.tester.read_rail()
+            return self.tester.read_version(), self.tester.read_rail()
 
         def done(result, error):
             if error:
                 self._log(f"通讯自检失败：{error}", "err")
+                self.info_label.configure(
+                    text=f"{self.device_info} · 版本读取失败", foreground=NG_COLOR)
+                return
+            version, rail = result
+            self.version_text = version.text if version.ok else "未知"
+            self._update_info()
+            if version.ok:
+                self._log(f"设备固件 {version.text}，当前轨压 {rail.mv} mV", "ok")
             else:
-                self._log(f"通讯自检通过，当前轨压 {result.mv} mV", "ok")
+                self._log("读取到的版本号是 0.0，设备可能没有正常应答", "err")
 
         self._run_async(work, done)
+
+    def _update_info(self) -> None:
+        self.info_label.configure(
+            text=f"设备：固件 {self.version_text} · {self.device_info}",
+            foreground=TEXT)
+
+    def _on_read_version(self) -> None:
+        if self.tester is None:
+            self._log("请先连接串口", "err")
+            return
+        self._run_async(self.tester.read_version, self._show_version)
+
+    def _show_version(self, version, error) -> None:
+        if error:
+            self._log(f"版本读取失败：{error}", "err")
+            return
+        self.version_text = version.text if version.ok else "未知"
+        self._update_info()
+        if version.ok:
+            self._log(f"设备固件版本 {version.text}", "ok")
+        else:
+            self._log("读取到的版本号是 0.0，设备可能没有正常应答", "err")
 
     def _disconnect(self) -> None:
         if self.master is not None:
             self.master.close()
         self.master = None
         self.tester = None
+        self.version_text = "未知"
+        self.device_info = ""
         self.auto_rail.set(False)
         self.connect_btn.configure(text="连接")
+        self.version_btn.configure(state="disabled")
         self.conn_label.configure(text="未连接", foreground=MUTED)
+        self.info_label.configure(text="未连接设备", foreground=MUTED)
         self._log("已断开串口")
 
     # ---------- 异步执行 ----------
@@ -353,7 +399,8 @@ class TestApp:
         self.full_status.configure(text="测试中…", foreground=ACCENT)
         for item in self.full_tree.get_children():
             self.full_tree.delete(item)
-        self._log("触发整机测试（cmd=14），等待设备完成…")
+        self._log(f"触发整机测试（cmd=14），设备固件 {self.version_text}，"
+                  f"等待完成…")
 
         def work():
             return self.tester.run_full_test(on_tick=self._post_tick)
@@ -372,13 +419,14 @@ class TestApp:
         self._show_rows(self.full_tree, result.rows())
         if result.all_ok:
             self.full_status.configure(text="PASS", foreground=OK_COLOR)
-            self._log(f"整机测试完成：PASS，轨压 {result.rail_mv} mV，"
+            self._log(f"整机测试完成：PASS（固件 {self.version_text}），"
+                      f"轨压 {result.rail_mv} mV，"
                       f"工作 {result.work_ua} uA / 休眠 {result.sleep_ua} uA", "ok")
         else:
             self.full_status.configure(
                 text=f"NG（{status_text(result.status)}）", foreground=NG_COLOR)
-            self._log(f"整机测试完成：NG，{status_text(result.status)}，"
-                      f"轨压 {result.rail_mv} mV", "err")
+            self._log(f"整机测试完成：NG（固件 {self.version_text}），"
+                      f"{status_text(result.status)}，轨压 {result.rail_mv} mV", "err")
 
     # ---------- 轨压 ----------
 
