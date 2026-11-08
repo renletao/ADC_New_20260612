@@ -20,6 +20,11 @@ from wf280_proto import (
     COEFF_MAX,
     RAIL_FLAG_MEASURED,
     RAIL_FLAG_UNDER,
+    R_BRIDGE,
+    R_COEFF_ALL,
+    R_M1_COEFF_ALL,
+    R_TEMP,
+    RESULT_LENGTH,
     FullTestResult,
     Wf280Tester,
     raw_to_ua,
@@ -72,7 +77,7 @@ class FakeFirmwareSerial:
 
     # ---------- 假固件行为 ----------
     def _results(self) -> list[int]:
-        regs = [0] * 32
+        regs = [0] * RESULT_LENGTH
         regs[1] = self.rail_mv
         regs[2] = 3300
         regs[3] = RAIL_FLAG_MEASURED
@@ -86,6 +91,14 @@ class FakeFirmwareSerial:
             regs[14 + i] = byte
         regs[20], regs[21] = 0x1234, 0x5678
         regs[22], regs[23] = 0x9ABC, 0xDEF0
+        # 电桥 0x00ABCD（正）、温度 0xFF1234（负），验证符号扩展
+        for i, byte in enumerate((0x00ABCD).to_bytes(4, "little")):
+            regs[R_BRIDGE + i] = byte
+        for i, byte in enumerate((0xFF1234).to_bytes(4, "little")):
+            regs[R_TEMP + i] = byte
+        for i in range(COEFF_MAX):
+            regs[R_COEFF_ALL + i] = 0x1234 + i
+            regs[R_M1_COEFF_ALL + i] = 0x9ABC + i
         return regs
 
     def _handle_request(self):
@@ -168,7 +181,7 @@ class FakeFirmwareSerial:
             if self.busy:
                 self.send_buf[0] = 0xF1
             else:
-                self.send_buf[:32] = self._results()
+                self.send_buf[:RESULT_LENGTH] = self._results()
             return
 
         if head == 0x211:                     # 同步读轨压
@@ -243,7 +256,7 @@ def _():
 
 @case("电流显示：按原始码算出实际值，不标“推算”")
 def _():
-    result = FullTestResult([0] * 32)
+    result = FullTestResult([0] * RESULT_LENGTH)
     result.regs[1] = 3296          # 实测轨压
     result.regs[4] = 0             # 固件给的工作电流 0（小于 1 uA 会被截断）
     for i, byte in enumerate(b"\xAE\x29\xFD\xFF"):
@@ -326,6 +339,22 @@ def _():
     assert result.bt_data == [0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6]
     assert result.coeff == [0x1234, 0x5678]
     assert result.m1_coeff == [0x9ABC, 0xDEF0]
+    # 扩展区：压力/温度原始码按 24 位有符号解释，两个 bank 全量系数
+    assert result.bridge_code == 0x00ABCD
+    assert signed24(result.bridge_code) == 0xABCD
+    assert result.temp_code == 0xFF1234
+    assert signed24(result.temp_code) == -0xEDCC
+    assert result.coeff_all[:3] == [0x1234, 0x1235, 0x1236]
+    assert result.coeff_all[-1] == 0x1234 + COEFF_MAX - 1
+    assert result.m1_coeff_all[0] == 0x9ABC
+    assert result.m1_coeff_all[-1] == 0x9ABC + COEFF_MAX - 1
+    assert len(result.regs) == RESULT_LENGTH
+    # 头两路是芯片 ID 高低字，不是系数
+    assert result.chip_id == 0x12341235
+    names = [row[0] for row in result.rows()]
+    assert "芯片 ID（系数 0x00/0x01）" in names, names
+    assert "正常系数 0x00-0x07" not in names, names
+    assert "正常系数 0x02-0x09" in names, names
     assert ticks, "应当至少有一次进度回调"
     assert fake.commands_seen[0] == [14]
     assert [1, 0x400] in fake.commands_seen

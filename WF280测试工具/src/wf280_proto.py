@@ -3,7 +3,7 @@
 
 覆盖固件里 WF280 相关的全部命令：
 
-    cmd[0] = 14                    异步整机测试（IsTaskDone 队列）  32 寄存器
+    cmd[0] = 14                    异步整机测试（IsTaskDone 队列）  96 寄存器
     {1, 0x211}                     同步回读实际轨压                 状态 + mV
     {11}                           OTP 双 bank 校验                 结果 + 失败路号
     {1, 0x208, meas, settle}       输出测试 3.3 V                   状态 + 6 字节
@@ -44,9 +44,30 @@ CMD_WF280_FULL_TEST = 14      # {14}
 
 # ---------------- 固件常量 ----------------
 
-RESULT_LENGTH = 32            # WF280_TEST_RESULT_LENGTH
+RESULT_LENGTH = 96            # WF280_TEST_RESULT_LENGTH
 OUTPUT_RESULT_LENGTH = 7      # WF280_OUTPUT_RESULT_LENGTH
 COEFF_MAX = 32                # WF280_COEFF_MAX
+
+# 整机测试结果帧偏移（0..23 与旧固件一致，24 起是扩展区）
+R_STATUS = 0
+R_RAIL_MV = 1
+R_RAIL_SET = 2
+R_RAIL_FLAG = 3
+R_WORK_UA = 4
+R_SLEEP_UA = 5
+R_WORK_CODE = 6
+R_SLEEP_CODE = 10
+R_BT_DATA = 14
+R_COEFF = 20
+R_M1_COEFF = 22
+R_BRIDGE = 24                 # 0xAD 电桥(压力) 24 位原始码
+R_TEMP = 28                   # 0xAE 温度 24 位原始码
+R_COEFF_ALL = 32              # 正常 bank 全 32 路
+R_M1_COEFF_ALL = 64           # M1 bank 全 32 路
+
+# 两个 bank 的头两路其实是芯片 ID 高低字（实测 29D8 0222 = 0x29D80222，
+# 与老工具的 id=29 D8 02 22 19 完全吻合），不是校准系数，显示时要分开。
+ID_COEFF_COUNT = 2
 RAIL_MIN_MV = 1500
 RAIL_TOLERANCE_PCT = 10
 TEST_RAIL_MV = 3300
@@ -185,6 +206,14 @@ class FullTestResult(Result):
     bt_data = property(lambda self: self.regs[14:20])
     coeff = property(lambda self: self.regs[20:22])
     m1_coeff = property(lambda self: self.regs[22:24])
+    bridge_code = property(lambda self: decode_u32(self.regs, R_BRIDGE))
+    temp_code = property(lambda self: decode_u32(self.regs, R_TEMP))
+    coeff_all = property(
+        lambda self: self.regs[R_COEFF_ALL:R_COEFF_ALL + COEFF_MAX])
+    m1_coeff_all = property(
+        lambda self: self.regs[R_M1_COEFF_ALL:R_M1_COEFF_ALL + COEFF_MAX])
+    chip_id = property(
+        lambda self: (self.coeff_all[0] << 16) | self.coeff_all[1])
 
     @property
     def ok(self) -> bool:
@@ -240,10 +269,24 @@ class FullTestResult(Result):
         rows.extend(self._current_rows("休眠", self.sleep_code, self.sleep_ua))
         rows.append(("0xAC 测量数据",
                      " ".join(f"{b:02X}" for b in self.bt_data), "—"))
-        rows.append(("正常 bank 系数",
-                     " ".join(f"0x{c:04X}" for c in self.coeff), "—"))
-        rows.append(("M1 bank 系数",
-                     " ".join(f"0x{c:04X}" for c in self.m1_coeff), "—"))
+        rows.append(("压力/电桥原始码",
+                     f"0x{self.bridge_code:08X}（24 位有符号 "
+                     f"{signed24(self.bridge_code)}）", "—"))
+        rows.append(("温度原始码",
+                     f"0x{self.temp_code:08X}（24 位有符号 "
+                     f"{signed24(self.temp_code)}）", "—"))
+        rows.append(("芯片 ID（系数 0x00/0x01）",
+                     f"0x{self.chip_id:08X}（{self.chip_id}）", "—"))
+        for start in range(ID_COEFF_COUNT, COEFF_MAX, 8):
+            end = min(start + 7, COEFF_MAX - 1)
+            rows.append((f"正常系数 0x{start:02X}-0x{end:02X}",
+                         " ".join(f"{c:04X}"
+                                  for c in self.coeff_all[start:end + 1]), "—"))
+        for start in range(ID_COEFF_COUNT, COEFF_MAX, 8):
+            end = min(start + 7, COEFF_MAX - 1)
+            rows.append((f"M1 系数 0x{0x80 + start:02X}-0x{0x80 + end:02X}",
+                         " ".join(f"{c:04X}"
+                                  for c in self.m1_coeff_all[start:end + 1]), "—"))
         return rows
 
 

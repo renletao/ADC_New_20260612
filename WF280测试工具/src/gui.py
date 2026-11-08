@@ -190,8 +190,14 @@ class TestApp:
                                       font=("Microsoft YaHei UI", 11, "bold"))
         self.full_verdict.pack(side="left", padx=(12, 0))
 
-        self.full_tree = self._tree(card, 8)
-        self.full_tree.pack(fill="x")
+        tree_wrap = ttk.Frame(card, style="Card.TFrame")
+        tree_wrap.pack(fill="x")
+        self.full_tree = self._tree(tree_wrap, 12)
+        tree_sb = ttk.Scrollbar(tree_wrap, orient="vertical",
+                                command=self.full_tree.yview)
+        self.full_tree.configure(yscrollcommand=tree_sb.set)
+        self.full_tree.pack(side="left", fill="x", expand=True)
+        tree_sb.pack(side="right", fill="y")
 
     def _build_rail_card(self, parent) -> None:
         card = self._card(parent, "② 轨压回读",
@@ -201,6 +207,9 @@ class TestApp:
         row.pack(fill="x", pady=(8, 4))
         self.rail_btn = ttk.Button(row, text="读取轨压", command=self._on_read_rail)
         self.rail_btn.pack(side="left")
+        self.rail_set_btn = ttk.Button(row, text="设压并回读",
+                                       command=self._on_set_and_read_rail)
+        self.rail_set_btn.pack(side="left", padx=(8, 0))
         ttk.Checkbutton(row, text="连续监测（0.5 s）", variable=self._auto_rail_var(),
                         style="Card.TCheckbutton").pack(side="left", padx=(12, 0))
 
@@ -209,6 +218,12 @@ class TestApp:
         self.rail_value.pack(side="left", padx=(12, 0))
         self.rail_verdict = ttk.Label(card, text="尚未读取", style="Muted.TLabel")
         self.rail_verdict.pack(side="left", padx=(8, 0))
+
+        ttk.Label(card,
+                  text="提示：整机测试 / 输出测试 / 读系数 / 读 M1 结束时都会断电，"
+                       "所以单点「读取轨压」常看到接近 0 mV，这是正常的；"
+                       "要看带电轨压请用「设压并回读」。",
+                  style="Muted.TLabel", wraplength=860).pack(anchor="w", pady=(2, 0))
 
     def _auto_rail_var(self) -> tk.BooleanVar:
         if not hasattr(self, "auto_rail"):
@@ -526,6 +541,24 @@ class TestApp:
             self._log("请先连接串口", "err")
             return
         self._run_async(self.tester.read_rail, self._show_rail)
+
+    def _on_set_and_read_rail(self) -> None:
+        """先按 ① 里的电压设压，等轨稳定再回读 —— 想看带电轨压就用这个。"""
+        if self.tester is None:
+            self._log("请先连接串口", "err")
+            return
+        mv = self._voltage()
+        if mv is None:
+            return
+        self.rail_value.configure(text="读取中…", fg=MUTED)
+        self._log(f"设压 {mv} mV 后回读轨压")
+
+        def work():
+            self.tester.set_supply(mv)
+            time.sleep(0.35)
+            return self.tester.read_rail()
+
+        self._run_async(work, self._show_rail)
 
     def _show_rail(self, result: RailReading | None, error=None) -> None:
         if error:
