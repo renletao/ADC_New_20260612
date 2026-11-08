@@ -20,7 +20,13 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from mb_rtu import HOLDING_BASE, INPUT_BASE, RtuMaster
+from mb_rtu import (
+    HOLDING_BASE,
+    INPUT_BASE,
+    ModbusError,
+    ModbusExceptionResponse,
+    RtuMaster,
+)
 
 # ---------------- 命令码（与 CmdHelper.h 一致）----------------
 
@@ -45,8 +51,11 @@ RAIL_MIN_MV = 1500
 RAIL_TOLERANCE_PCT = 10
 TEST_RAIL_MV = 3300
 SHORT_CURRENT_UA = 20000
-SETTLE_3V3_MS = 20
-SETTLE_2V_MS = 200
+# 固件里 3.3 V 用 20 ms、2.0 V 用 200 ms，但那是整机测试里轨已经稳了的前提。
+# 单独发一条输出测试命令时轨是冷的，实测 20 ms 会报「NOR 忙等超时」，
+# 所以这里默认给宽一点，需要严格对标固件时用 --settle 传 20/200。
+SETTLE_3V3_MS = 300
+SETTLE_2V_MS = 400
 
 RAIL_FLAG_MEASURED = 0x01
 RAIL_FLAG_DEVIATED = 0x02
@@ -327,6 +336,22 @@ class Wf280Tester:
         self.cmd_addr = cmd_addr
         self.in_addr = in_addr
 
+    # 不同固件构建对地址 0 基/1 基的处理不一样，连上后先试一遍。
+    BASE_CANDIDATES = ((HOLDING_BASE, INPUT_BASE), (40001, 30001))
+
+    def detect_bases(self) -> tuple[int, int]:
+        """试出这块固件认的寄存器基址，成功返回 (命令地址, 结果地址)。"""
+        last: Exception | None = None
+        for cmd_addr, in_addr in self.BASE_CANDIDATES:
+            try:
+                self.master.read_input_registers(in_addr, 1)
+            except ModbusExceptionResponse as exc:
+                last = exc          # 设备在，但这个地址不认，试下一个
+                continue
+            self.cmd_addr, self.in_addr = cmd_addr, in_addr
+            return cmd_addr, in_addr
+        raise ModbusError(f"寄存器基址都对不上，最后一次错误：{last}")
+
     # 写命令 → 读结果。固件在写保持寄存器的回调里同步执行 Parse()，
     # 结果放在 sendBuf 里，随后从输入寄存器读回来。
     def _command(self, values: list[int], read_count: int) -> list[int]:
@@ -352,8 +377,13 @@ class Wf280Tester:
         """触发 cmd[0]=14，固件回 out[0]=1 表示已入队。"""
         return self._command([CMD_WF280_FULL_TEST], 1)[0]
 
-    def run_full_test(self, timeout: float = 20.0, interval: float = 0.2,
+    def run_full_test(self, timeout: float = 120.0, interval: float = 0.2,
                       on_tick=None) -> FullTestResult:
+        """触发整机测试并等它跑完。
+
+        实测这块板子整机跑完要 50~60 秒（I2C 重试占大头），
+        所以默认超时给到 120 秒，别按两秒的直觉写。
+        """
         ack = self.start_full_test()
         if ack != 1:
             raise RuntimeError(f"触发测试失败，设备返回 {status_text(ack)}")

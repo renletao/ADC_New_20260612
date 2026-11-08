@@ -50,14 +50,14 @@ def cli(argv: list[str]) -> int:
     parser.add_argument("--baud", type=int, default=115200,
                         help="波特率，默认 115200")
     parser.add_argument("--slave", type=int, default=1, help="从机地址，默认 1")
-    parser.add_argument("--timeout", type=float, default=20.0,
-                        help="整机测试超时秒数，默认 20")
+    parser.add_argument("--timeout", type=float, default=120.0,
+                        help="整机测试超时秒数，默认 120（实测整机约 50~60 s）")
     parser.add_argument("--count", type=int, default=4,
                         help="系数路数，默认 4")
     parser.add_argument("--meas", default="0x0000",
                         help="0xAC 测量参数，默认 0x0000")
     parser.add_argument("--settle", type=int, default=None,
-                        help="测量稳定时间 ms，默认 3.3 V 用 20、2.0 V 用 200")
+                        help="测量稳定时间 ms，默认 3.3 V 用 300、2.0 V 用 400")
     parser.add_argument("--mv", type=int, default=3300,
                         help="设定轨压毫伏值，默认 3300")
     parser.add_argument("cmd", choices=[
@@ -86,6 +86,8 @@ def cli(argv: list[str]) -> int:
     try:
         with RtuMaster(args.port, baudrate=args.baud, slave=args.slave) as master:
             tester = Wf280Tester(master)
+            cmd_addr, in_addr = tester.detect_bases()
+            print(f"寄存器基址: 命令@{cmd_addr} 结果@{in_addr}")
 
             version = tester.read_version()
 

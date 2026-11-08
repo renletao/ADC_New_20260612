@@ -3,12 +3,13 @@
 
 不依赖 pymodbus，只用 pyserial，方便在产线电脑上直接跑。
 
-固件里的约定（见 Middlewares/Third_Party/FreeModbus/Modbus.c）：
-    eMBRegHoldingCB 直接比较 usAddress == 40001
-    eMBRegInputCB   直接比较 usAddress == 30001
-所以 PDU 里的寄存器地址要写 40001 / 30001 本身，不能用 0 基偏移。
-这是这块板子既有的约定，别按标准 Modbus 的偏移去改，否则会返回
-MB_ENOREG（异常码 2）。
+**寄存器地址必须用 PDU 地址（0 基），不要用 3xxxx/4xxxx 引用号。**
+这块板子实测：
+    写命令   FC10 @ 40000
+    读结果   FC04 @ 30000
+发 40001 / 30001 会直接被固件回异常码 02（非法寄存器地址）——
+固件注释里写的“30001 起”“40001”是 Modbus 的引用号写法，真正上线时
+要减 1。以后换固件如果地址变了，用 Wf280Tester.detect_bases() 自动识别。
 """
 
 from __future__ import annotations
@@ -16,8 +17,8 @@ from __future__ import annotations
 import struct
 import time
 
-HOLDING_BASE = 40001   # 命令寄存器（主站写）
-INPUT_BASE = 30001     # 结果寄存器（主站读）
+HOLDING_BASE = 40000   # 命令寄存器（主站写），对应引用号 40001
+INPUT_BASE = 30000     # 结果寄存器（主站读），对应引用号 30001
 
 
 class ModbusError(Exception):
@@ -97,6 +98,13 @@ class RtuMaster:
         )
         # 固件是 8N1，115200，从机地址 1（app_freertos.c）
         time.sleep(0.1)
+        try:
+            # 默认拉低 DTR/RTS，跟原厂 C# 工具（System.IO.Ports）保持一致，
+            # 避免某些 CH340 板子把它们接到复位/BOOT 脚上被摁住。
+            self._ser.dtr = False
+            self._ser.rts = False
+        except Exception:
+            pass
         self._ser.reset_input_buffer()
         return self
 

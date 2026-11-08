@@ -31,7 +31,8 @@ class FakeFirmwareSerial:
     """假串口：收到主站帧就按固件逻辑生成应答。"""
 
     def __init__(self, *, rail_mv=3298, busy_polls=3, stuck=False,
-                 otp_fail=0, version=(1, 0)):
+                 otp_fail=0, version=(1, 0),
+                 holding_base=40000, input_base=30000):
         self.is_open = True
         self.rx = bytearray()
         self.tx_buffer = bytearray()
@@ -40,6 +41,8 @@ class FakeFirmwareSerial:
         self.stuck = stuck
         self.otp_fail = otp_fail          # 0=通过，非 0=第几路失败
         self.version = version
+        self.holding_base = holding_base  # 真板子实测是 40000/30000（0 基）
+        self.input_base = input_base
         self.busy = False
         self.send_buf = [0] * 120
         self.commands_seen: list[list[int]] = []
@@ -97,16 +100,21 @@ class FakeFirmwareSerial:
 
         if fc == 0x10:
             address, count, _ = struct.unpack(">HHB", body[2:7])
-            assert address == 40001, f"命令地址应为 40001，收到 {address}"
-            values = list(struct.unpack(f">{count}H", body[7:]))
-            self.commands_seen.append(values)
-            self._run_command(values)
-            payload = struct.pack(">BHH", 0x10, address, count)
+            if address != self.holding_base:
+                # 地址不对就回异常码 02，跟真板子行为一致
+                payload = struct.pack(">BB", 0x10 | 0x80, 0x02)
+            else:
+                values = list(struct.unpack(f">{count}H", body[7:]))
+                self.commands_seen.append(values)
+                self._run_command(values)
+                payload = struct.pack(">BHH", 0x10, address, count)
         elif fc == 0x04:
             address, count = struct.unpack(">HH", body[2:6])
-            assert address == 30001, f"结果地址应为 30001，收到 {address}"
-            data = b"".join(struct.pack(">H", v) for v in self.send_buf[:count])
-            payload = struct.pack(">BB", 0x04, len(data)) + data
+            if address != self.input_base:
+                payload = struct.pack(">BB", 0x04 | 0x80, 0x02)
+            else:
+                data = b"".join(struct.pack(">H", v) for v in self.send_buf[:count])
+                payload = struct.pack(">BB", 0x04, len(data)) + data
         else:
             payload = struct.pack(">BB", fc | 0x80, 0x01)
 
@@ -227,6 +235,20 @@ def _():
     assert mb_rtu.with_crc(bytes([1, 3, 0, 0, 0, 1]))[-2:] == b"\x84\x0a"
 
 
+@case("寄存器基址：识别 0 基（40000/30000，真板子就是这种）")
+def _():
+    _, tester = make_tester()
+    assert tester.detect_bases() == (40000, 30000)
+
+
+@case("寄存器基址：兼容 1 基固件（40001/30001）")
+def _():
+    fake, tester = make_tester(holding_base=40001, input_base=30001)
+    assert tester.detect_bases() == (40001, 30001)
+    result = tester.read_version()
+    assert result.ok and fake.commands_seen[-1] == [1, 0x104]
+
+
 @case("0x104 固件版本：读得到才算连对设备")
 def _():
     fake, tester = make_tester(version=(1, 0))
@@ -331,7 +353,7 @@ def _():
 def _():
     fake, tester = make_tester()
     result = tester.test_output_2v0()
-    assert fake.commands_seen[-1] == [1, 0x210, 0x0000, 200]
+    assert fake.commands_seen[-1] == [1, 0x210, 0x0000, 400]
     assert result.ok and result.supply_mv == 2000
 
 

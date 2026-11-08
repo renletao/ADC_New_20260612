@@ -181,7 +181,7 @@ class TestApp:
         self.meas_var = tk.StringVar(value="0x0000")
         ttk.Entry(row, textvariable=self.meas_var, width=9).pack(side="left", padx=(4, 12))
         ttk.Label(row, text="稳定时间", style="Card.TLabel").pack(side="left")
-        self.settle_var = tk.StringVar(value="100")
+        self.settle_var = tk.StringVar(value="300")
         ttk.Entry(row, textvariable=self.settle_var, width=6).pack(side="left", padx=(4, 2))
         ttk.Label(row, text="ms", style="Muted.TLabel").pack(side="left", padx=(0, 12))
         ttk.Label(row, text="系数路数", style="Card.TLabel").pack(side="left")
@@ -295,17 +295,19 @@ class TestApp:
         self._log(f"已连接 {port}，{baud} 8N1，从机 {slave}", "ok")
 
         def work():
-            return self.tester.read_version(), self.tester.read_rail()
+            bases = self.tester.detect_bases()
+            return bases, self.tester.read_version(), self.tester.read_rail()
 
         def done(result, error):
             if error:
                 self._log(f"通讯自检失败：{error}", "err")
                 self.info_label.configure(
-                    text=f"{self.device_info} · 版本读取失败", foreground=NG_COLOR)
+                    text=f"{self.device_info} · 通讯失败", foreground=NG_COLOR)
                 return
-            version, rail = result
+            bases, version, rail = result
             self.version_text = version.text if version.ok else "未知"
             self._update_info()
+            self._log(f"寄存器基址 命令@{bases[0]} / 结果@{bases[1]}", "muted")
             if version.ok:
                 self._log(f"设备固件 {version.text}，当前轨压 {rail.mv} mV", "ok")
             else:
