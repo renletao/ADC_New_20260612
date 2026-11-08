@@ -36,3 +36,7 @@ desktop.ini
 
 # ===== AI 助手本地记录（不入库）=====
 .workbuddy/
+
+# ===== Python 缓存 =====
+__pycache__/
+*.pyc
