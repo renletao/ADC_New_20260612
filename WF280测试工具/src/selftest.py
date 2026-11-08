@@ -332,7 +332,7 @@ def _():
     result = tester.run_full_test(interval=0.0, on_tick=ticks.append)
 
     assert result.ok and result.all_ok
-    assert result.rail_mv == 3298 and result.rail_set_mv == 3300
+    assert result.rail_mv == 3298
     assert (result.work_ua, result.sleep_ua) == (850, 12)
     assert result.work_code == 0x44332211
     assert result.sleep_code == 0x08070605

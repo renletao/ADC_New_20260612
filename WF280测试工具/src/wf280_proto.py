@@ -51,7 +51,6 @@ COEFF_MAX = 32                # WF280_COEFF_MAX
 # 整机测试结果帧偏移（0..23 与旧固件一致，24 起是扩展区）
 R_STATUS = 0
 R_RAIL_MV = 1
-R_RAIL_SET = 2
 R_RAIL_FLAG = 3
 R_WORK_UA = 4
 R_SLEEP_UA = 5
@@ -197,7 +196,6 @@ class FullTestResult(Result):
 
     status = property(lambda self: self.regs[0])
     rail_mv = property(lambda self: self.regs[1])
-    rail_set_mv = property(lambda self: self.regs[2])
     rail_flag = property(lambda self: self.regs[3])
     work_ua = property(lambda self: self.regs[4])
     sleep_ua = property(lambda self: self.regs[5])
@@ -254,9 +252,6 @@ class FullTestResult(Result):
         rows: list[tuple[str, str, str]] = [
             ("总体状态", status_text(self.status), "OK" if self.ok else "NG"),
             ("轨压（实测）", f"{self.rail_mv} mV", self.rail_verdict),
-            ("轨压（设定）",
-             f"{self.rail_set_mv} mV" if self.rail_set_mv
-             else "—（由 0x201 决定）", "—"),
         ]
         flags = []
         if self.rail_flag & RAIL_FLAG_MEASURED:

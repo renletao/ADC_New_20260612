@@ -169,7 +169,7 @@ class TestApp:
 
     def _build_full_card(self, parent) -> None:
         card = self._card(parent, "① 整机测试",
-                          "AllTestFor280    cmd[0] = 14    异步，轨压按设定值")
+                          "AllTestFor280    cmd[0] = 14    异步，先设电压再测")
 
         row = ttk.Frame(card, style="Card.TFrame")
         row.pack(fill="x", pady=(8, 6))
@@ -504,8 +504,7 @@ class TestApp:
         self._log(f"设定电压 {mv} mV → 触发整机测试 cmd[0]=14（AllTestFor280）")
 
         def work():
-            # 先设压：固件收到 {1,0x201} 后会把这次的值记下来，
-            # 随后 AllTestFor280 就按这个电压供电。
+            # 先发 0x201 设置输出电压，再触发整机测试；固件回读实际轨压并按它测试。
             self.tester.set_supply(mv)
             time.sleep(0.3)
             return self.tester.run_full_test(on_tick=lambda e: self._post_status(
@@ -526,14 +525,13 @@ class TestApp:
         self._show_rows(self.full_tree, result.rows())
         if result.all_ok:
             self.full_verdict.configure(text="PASS", foreground=OK_COLOR)
-            self._log(f"AllTestFor280 完成：PASS，设定 {result.rail_set_mv} mV / "
-                      f"实测 {result.rail_mv} mV，工作 {result.work_ua} uA / "
-                      f"休眠 {result.sleep_ua} uA", "ok")
+            self._log(f"AllTestFor280 完成：PASS，实测 {result.rail_mv} mV，"
+                      f"工作 {result.work_ua} uA / 休眠 {result.sleep_ua} uA", "ok")
         else:
             self.full_verdict.configure(
                 text=f"NG（{status_text(result.status)}）", foreground=NG_COLOR)
             self._log(f"AllTestFor280 完成：NG，{status_text(result.status)}，"
-                      f"设定 {result.rail_set_mv} mV / 实测 {result.rail_mv} mV", "err")
+                      f"实测 {result.rail_mv} mV", "err")
 
     # ---------- ② 轨压 ----------
 
