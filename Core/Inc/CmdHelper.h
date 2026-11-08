@@ -26,12 +26,17 @@
 #define TYPE1_WF280_OUTDATA 0x208
 #define TYPE1_WF280_COEFF 0x209
 #define TYPE1_WF280_2V_OUTDATA 0x210
+#define TYPE1_WF280_RAIL 0x211          /* 回读实际 DUT 轨压，out[0]=状态 out[1]=mV */
 #define TYPE1_WF162A_TEST 9u
 #define PRODUCT_WF162A TYPE1_WF162A_TEST
 #define TYPE1_WF100S_TEST 12u
 #define PRODUCT_WF100S TYPE1_WF100S_TEST
 #define TYPE1_JH1400F_TEST 13u
 #define PRODUCT_JH1400F TYPE1_JH1400F_TEST
+/* cmd[0] = 14 触发 WF280 整机异步测试。1/2/3/5/8/9/10/11/12/13 已被占用，
+   11 是 WF280 的 OTP 校验，所以 WF280 的产品号取 14。 */
+#define TYPE1_WF280_TEST 14
+#define PRODUCT_WF280 TYPE1_WF280_TEST
 
 /* WF183/WF2200/WF3050 use 3.3 V; WF100S analog supply uses 5 V. */
 #ifndef PRODUCT_TEST_VDD_MV
@@ -45,6 +50,7 @@
 #define WF100S 2u
 #define WF162A 3u
 #define JH1400F 4u
+#define WF280 5
 #define PRODUCT_RESULT_LENGTH 120u
 #define CMD_ERROR_BUSY 0xF1u
 #define CMD_ERROR_LENGTH 0xF2u

@@ -39,6 +39,13 @@ typedef struct { uint32_t Pin, Mode, Pull, Speed; } GPIO_InitTypeDef;
 void HAL_GPIO_WritePin(GPIO_TypeDef *, uint16_t, GPIO_PinState);
 GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *, uint16_t);
 void HAL_GPIO_Init(GPIO_TypeDef *, GPIO_InitTypeDef *);
+typedef enum { HAL_OK = 0u, HAL_ERROR = 1u, HAL_BUSY = 2u, HAL_TIMEOUT = 3u } HAL_StatusTypeDef;
+typedef struct { uint32_t dummy; } ADC_HandleTypeDef;
+HAL_StatusTypeDef HAL_ADC_Start(ADC_HandleTypeDef *);
+HAL_StatusTypeDef HAL_ADC_Stop(ADC_HandleTypeDef *);
+HAL_StatusTypeDef HAL_ADC_PollForConversion(ADC_HandleTypeDef *, uint32_t);
+uint32_t HAL_ADC_GetValue(ADC_HandleTypeDef *);
+HAL_StatusTypeDef HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef *);
 #endif
 ''',
     "cmsis_os.h": "#include <stdint.h>\nvoid osDelay(uint32_t);\n",
@@ -71,6 +78,7 @@ HARNESS = r'''
 #include "wf100s.h"
 GPIO_TypeDef fake_a, fake_b, fake_c;
 ADS1220_TypeDef ADS1220;
+ADC_HandleTypeDef hadc1;
 OWI_TypeDef OWI_Device;
 I2CInfo i2c1;
 UartInfo uart1;
@@ -78,10 +86,17 @@ static unsigned voltage, last_power_on_mv, power_on, power_off, writes, reads, s
 static unsigned tx_pin, rx_pin, uart_receives, uart_fail_once, flash_words;
 static uint32_t last_gpio_mode;
 static uint32_t adc_raw = 0x123456;
+static uint32_t rail_code = 32760;
 void HAL_GPIO_WritePin(GPIO_TypeDef *p,uint16_t pin,GPIO_PinState s) {(void)p;(void)pin;(void)s;}
 GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *p,uint16_t pin) {(void)p;(void)pin;return GPIO_PIN_RESET;}
 void HAL_GPIO_Init(GPIO_TypeDef *p,GPIO_InitTypeDef *i) {(void)p;last_gpio_mode=i->Mode;}
 void osDelay(uint32_t n) {(void)n;}
+/* PB1 / ADC1_IN9 回读：满量程 65520 对应 VDDA*2。 */
+HAL_StatusTypeDef HAL_ADC_Start(ADC_HandleTypeDef *h) {(void)h;return HAL_OK;}
+HAL_StatusTypeDef HAL_ADC_Stop(ADC_HandleTypeDef *h) {(void)h;return HAL_OK;}
+HAL_StatusTypeDef HAL_ADC_PollForConversion(ADC_HandleTypeDef *h,uint32_t t) {(void)h;(void)t;return HAL_OK;}
+uint32_t HAL_ADC_GetValue(ADC_HandleTypeDef *h) {(void)h;return rail_code;}
+HAL_StatusTypeDef HAL_ADCEx_Calibration_Start(ADC_HandleTypeDef *h) {(void)h;return HAL_OK;}
 void delay_us(uint32_t n) {(void)n;}
 void MCP4725_WriteData_Voltage(uint16_t mv) {voltage=mv;if(mv){last_power_on_mv=mv;++power_on;}else ++power_off;}
 void ADS1220_Init(ADS1220_TypeDef *a) {a->state=1;++adc_inits;}
@@ -161,7 +176,7 @@ int main(void){
  reset();out[0]=0xABCD;WF280CheckOtpReg(out,1);assert(out[0]==0xABCD&&writes==0);
  /* WF280 command adapter: reset/poll/read, both output rails, coefficient
     reset, M1 current bytes and immediate short-circuit shutdown. */
- reset();uint16_t wf280_out[40]={0};
+ reset();uint16_t wf280_out[96]={0};
  assert(WF280ReadCoefficients(0,2,wf280_out,40)==0&&wf280_out[0]==0&&
         wf280_out[1]==0x1200&&wf280_out[2]==0x1201&&last_power_on_mv==3300&&voltage==0);
  reset();assert(WF280ReadM1(2,wf280_out,40)==0&&wf280_out[0]==0&&
@@ -171,9 +186,34 @@ int main(void){
         wf280_out[1]==0xAC&&wf280_out[6]==0xB1&&last_power_on_mv==3300&&voltage==0);
  reset();nack=1;assert(WF280TestOutput(3300,0x1234,5,wf280_out,40)==WF280_STATUS_I2C&&
         wf280_out[0]==WF280_STATUS_I2C&&power_off==1&&voltage==0);
- reset();adc_raw=0xFFFFFF;assert(WF280TestOutput(2000,0x1234,5,wf280_out,40)==WF280_STATUS_SHORT&&
+reset();adc_raw=0xFFFFFF;assert(WF280TestOutput(2000,0x1234,5,wf280_out,40)==WF280_STATUS_SHORT&&
         wf280_out[0]==WF280_STATUS_SHORT&&writes==0&&power_off==1&&voltage==0);
- /* All product paths preserve existing result offsets and power down. */
+/* cmd=14 整机测试：轨压回读 + 休眠/工作电流 + 压力/温度 + 全量系数，结束断电。
+   rail_code=32760 对应 65520 的 50 %，即 VDDA*2/2 = 3300 mV。
+   0xAD 读回 AE AF B0（bit23 为 1）符号扩展后是 FFAEAFB0；
+   0xAE 读回 AF B0 B1 符号扩展后是 FFAFB0B1。 */
+reset();AllTestFor280(wf280_out,96);
+assert(wf280_out[WF280_R_STATUS]==0&&wf280_out[WF280_R_RAIL_MV]==3300&&
+       wf280_out[WF280_R_RAIL_SET]==3300&&
+       wf280_out[WF280_R_RAIL_FLAG]==WF280_RAIL_FLAG_MEASURED&&
+       wf280_out[WF280_R_WORK_UA]==3911&&wf280_out[WF280_R_SLEEP_UA]==3911&&
+       wf280_out[WF280_R_BT_DATA]==0xAC&&wf280_out[WF280_R_BT_DATA+5]==0xB1&&
+       wf280_out[WF280_R_COEFF]==0x1200&&wf280_out[WF280_R_COEFF+1]==0x1201&&
+       wf280_out[WF280_R_M1_COEFF]==0x1200&&wf280_out[WF280_R_M1_COEFF+1]==0x1201&&
+       wf280_out[WF280_R_BRIDGE]==0xB0&&wf280_out[WF280_R_BRIDGE+1]==0xAF&&
+       wf280_out[WF280_R_BRIDGE+2]==0xAE&&wf280_out[WF280_R_BRIDGE+3]==0xFF&&
+       wf280_out[WF280_R_TEMP]==0xB1&&wf280_out[WF280_R_TEMP+1]==0xB0&&
+       wf280_out[WF280_R_TEMP+2]==0xAF&&wf280_out[WF280_R_TEMP+3]==0xFF&&
+       wf280_out[WF280_R_COEFF_ALL]==0x1200&&wf280_out[WF280_R_COEFF_ALL+31]==0x121F&&
+       wf280_out[WF280_R_M1_COEFF_ALL]==0x1200&&wf280_out[WF280_R_M1_COEFF_ALL+31]==0x121F&&
+       power_on==1&&power_off==1&&voltage==0);
+/* 轨没起来就不去测芯片：直接报 WF280_STATUS_RAIL，且不产生 I2C 事务。 */
+reset();rail_code=0;AllTestFor280(wf280_out,96);
+assert(wf280_out[WF280_R_STATUS]==WF280_STATUS_RAIL&&
+       (wf280_out[WF280_R_RAIL_FLAG]&WF280_RAIL_FLAG_UNDER)!=0&&
+       wf280_out[WF280_R_RAIL_MV]==0&&writes==0&&power_off==1&&voltage==0);
+rail_code=32760;
+/* All product paths preserve existing result offsets and power down. */
  reset();AllTestFor183(out,120);assert(last_power_on_mv==3300&&power_on==1&&power_off==1&&voltage==0);assert(out[2]==0xAA&&out[3]==8&&out[10]==42&&out[90]==1&&out[100]==1);assert(tx_pin==UART_TX_Pin&&rx_pin==UART_RX_Pin);
  reset();AllTestFor2200(out,120);assert(last_power_on_mv==3300&&power_on==1&&power_off==1&&out[0]==0x56&&out[4]==1&&out[8]==1&&out[22]==1&&out[73]==0x56);
  reset();ADS1220.config[0]=0x39;AllTestFor100S(out,120);assert(last_power_on_mv==5000&&power_on==1&&power_off==1&&ADS1220.config[0]==0x39&&out[0]==0x56&&out[12]==0x56);

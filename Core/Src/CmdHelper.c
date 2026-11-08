@@ -45,6 +45,7 @@ void RunPendingProductTest(void)
     case WF2200: AllTestFor2200(sendBufBy, PRODUCT_RESULT_LENGTH); break;
     case WF162A: AllTestFor162A(sendBufBy, PRODUCT_RESULT_LENGTH); break;
     case JH1400F: AllTestForJH1400F(sendBufBy, PRODUCT_RESULT_LENGTH); break;
+    case WF280: AllTestFor280(sendBufBy, PRODUCT_RESULT_LENGTH); break;
     default: break;
     }
     IsTaskDone = 0;
@@ -70,6 +71,7 @@ void ParseSystemCmd(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16
     case TYPE1_WF280_M1: required_cmd = 3; break;
     case TYPE1_WF280_COEFF: required_cmd = 3; break;
     case TYPE1_WF280_OUTDATA: case TYPE1_WF280_2V_OUTDATA: required_cmd = 4; break;
+    case TYPE1_WF280_RAIL: required_out = 2; break;
     default: break;
     }
     if (cmd_lens < required_cmd || out_lens < required_out) {
@@ -162,6 +164,13 @@ void ParseSystemCmd(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16
             else (void)WF280TestOutput(cmdHead == TYPE1_WF280_2V_OUTDATA ? 2000u : 3300u,
                                        cmd[2], cmd[3], out, out_lens);
             break;
+        case TYPE1_WF280_RAIL: {
+            /* 只做测量，不改变供电状态：out[0]=状态，out[1]=实际轨压 mV。 */
+            uint16_t rail_mv = WF280ReadRailMv();
+            out[0] = rail_mv ? WF280_STATUS_OK : WF280_STATUS_RAIL;
+            out[1] = rail_mv;
+            break;
+        }
         default:
 		break;
 	}
@@ -330,6 +339,11 @@ void Parse(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16_t out_le
             break;
         case TYPE1_JH1400F_TEST:
             IsTask_mub = JH1400F;
+            IsTaskDone = 1;
+            out[0] = 1;
+            break;
+        case TYPE1_WF280_TEST: // 14
+            IsTask_mub = WF280;
             IsTaskDone = 1;
             out[0] = 1;
             break;
