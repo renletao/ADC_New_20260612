@@ -254,7 +254,9 @@ class FullTestResult(Result):
         rows: list[tuple[str, str, str]] = [
             ("总体状态", status_text(self.status), "OK" if self.ok else "NG"),
             ("轨压（实测）", f"{self.rail_mv} mV", self.rail_verdict),
-            ("轨压（设定）", f"{self.rail_set_mv} mV", "—"),
+            ("轨压（设定）",
+             f"{self.rail_set_mv} mV" if self.rail_set_mv
+             else "—（由 0x201 决定）", "—"),
         ]
         flags = []
         if self.rail_flag & RAIL_FLAG_MEASURED:
