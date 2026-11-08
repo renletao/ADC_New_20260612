@@ -13,6 +13,7 @@ STM32CubeMX 生成 + Keil MDK 编译。
 | `Middlewares/` | FreeRTOS 等中间件 |
 | `MDK-ARM/` | Keil 工程：`ADC.uvprojx`（工程文件）、`ADC.uvoptx`、启动文件 |
 | `tests/` | Python 测试脚本 |
+| `多功能小板测试-多路电压/` | 上位机测试工具（已编译，exe + 依赖库） |
 | `Schematic.png` | 原理图 |
 | `ads1220.pdf` | ADS1220 数据手册 |
 
@@ -35,6 +36,16 @@ UV4.exe -b MDK-ARM/ADC.uvprojx -j0 -o build.log
 用 STM32CubeMX 打开 `ADC.ioc`，改完点 `GENERATE CODE`。
 注意生成的代码会覆盖 `Core/Src`、`Core/Inc` 里的初始化部分，
 自己的业务逻辑请写在 `/* USER CODE BEGIN */` 与 `/* USER CODE END */` 之间，否则会被覆盖。
+
+## 上位机测试工具
+
+`多功能小板测试-多路电压/` 是 Windows 下直接双击运行的上位机程序，
+主程序 `多功能小板测试.exe`，同目录的 12 个 `.dll` 是它的运行依赖，**必须放在同一目录**，
+拷到别的电脑时整个文件夹一起拷，不要只拿 exe。
+
+- 需要 .NET Framework 运行环境（Win10/11 自带）
+- 运行后会生成日志文件，日志属临时产物，不入库
+- 这是编译后的发布版本，更新方法是用新版本整体覆盖同目录文件
 
 ## 日常更新流程（重要）
 
