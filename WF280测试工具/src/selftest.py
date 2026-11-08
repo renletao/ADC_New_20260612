@@ -20,7 +20,10 @@ from wf280_proto import (
     COEFF_MAX,
     RAIL_FLAG_MEASURED,
     RAIL_FLAG_UNDER,
+    FullTestResult,
     Wf280Tester,
+    raw_to_ua,
+    signed24,
     status_text,
 )
 
@@ -226,6 +229,29 @@ def case(name):
         CASES.append((name, fn))
         return fn
     return deco
+
+
+@case("电流换算：负原始码按 24 位有符号解释")
+def _():
+    # 真机读到的原始码，固件因 bit31 判断把它当无效返回 0
+    assert signed24(0xFFFD29AE) == -185938
+    assert signed24(0x00000017) == 23
+    ua = raw_to_ua(0xFFFD29AE, 3296)
+    assert 605 < ua < 612, ua          # 约 608.8 uA
+    assert raw_to_ua(0xFFFD29AE, 0) == 0    # 没轨压不换算
+
+
+@case("电流换算：固件返回 0 时表格给出推算值")
+def _():
+    result = FullTestResult([0] * 32)
+    result.regs[1] = 3296          # 实测轨压
+    result.regs[4] = 0             # 固件给的工作电流 0
+    for i, byte in enumerate(b"\xAE\x29\xFD\xFF"):
+        result.regs[6 + i] = byte
+    texts = {row[0]: row for row in result.rows()}
+    assert "工作电流（推算）" in texts, list(texts)
+    value = float(texts["工作电流（推算）"][1].split()[0])
+    assert 605 <= value <= 612, value
 
 
 @case("CRC16 标准向量")

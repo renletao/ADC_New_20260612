@@ -88,6 +88,44 @@ def decode_u32(regs: list[int], offset: int) -> int:
     return value
 
 
+# ---------------- 电流原始码换算 ----------------
+
+# 与固件 wf280.c 同一套常数
+ADC_FULL_SCALE = 8388608        # WF280_ADC_FULL_SCALE，24 位满量程
+CURRENT_SHUNT_OHM = 120         # WF280_CURRENT_SHUNT_OHM
+
+
+def signed24(raw: int) -> int:
+    """把 24 位补码解释成有符号整数。
+
+    ADS1220 是 24 位 ADC，负数在固件里被符号扩展成了 32 位，
+    所以 0xFFFD29AE 实际是 0xFD29AE = -185938，不是 42 亿。
+    """
+    value = raw & 0xFFFFFF
+    return value - (1 << 24) if value & 0x800000 else value
+
+
+def signed16(value: int) -> int:
+    """16 位补码转有符号（M1 结果只回传低 16 位）。"""
+    value &= 0xFFFF
+    return value - (1 << 16) if value & 0x8000 else value
+
+
+def raw_to_ua(raw: int, rail_mv: int, *, magnitude: bool = True) -> float:
+    """按固件同一公式把原始码换成 uA。
+
+    magnitude=True 取绝对值：这颗板子的电流通道读出来是负的，
+    固件用 raw & 0x80000000 判断有效性，会把负值整条丢掉返回 0 uA，
+    所以这里自己算一遍，才能看到真实电流。
+    """
+    if not rail_mv:
+        return 0.0
+    value = signed24(raw)
+    if magnitude:
+        value = abs(value)
+    return value * rail_mv * 1000 / (ADC_FULL_SCALE * CURRENT_SHUNT_OHM)
+
+
 class Result:
     """所有测试结果的共同接口：ok 与 rows()，界面和命令行共用。"""
 
@@ -168,6 +206,23 @@ class FullTestResult(Result):
         """整机判定：总状态 OK 且轨压既没欠压也没超差。"""
         return self.ok and not (self.rail_flag & (RAIL_FLAG_UNDER | RAIL_FLAG_DEVIATED))
 
+    def _current_rows(self, name: str, raw: int, fw_ua: int):
+        """电流行：固件返回 0 但原始码不为 0 时，把推算值也列出来。"""
+        calc = raw_to_ua(raw, self.rail_mv)
+        rows: list[tuple[str, str, str]] = []
+        if fw_ua:
+            rows.append((f"{name}电流", f"{fw_ua} uA",
+                         "NG 疑似短路" if fw_ua >= SHORT_CURRENT_UA else "OK"))
+        elif calc >= 0.5:
+            rows.append((f"{name}电流", "固件返回 0", "原始码为负，被固件丢弃"))
+            rows.append((f"{name}电流（推算）", f"{calc:.0f} uA",
+                         "NG 疑似短路" if calc >= SHORT_CURRENT_UA else "OK"))
+        else:
+            rows.append((f"{name}电流", f"{calc:.2f} uA（推算）", "OK"))
+        rows.append((f"{name}电流原始码",
+                     f"0x{raw:08X}（24 位有符号 {signed24(raw)}）", "—"))
+        return rows
+
     def rows(self):
         rows: list[tuple[str, str, str]] = [
             ("总体状态", status_text(self.status), "OK" if self.ok else "NG"),
@@ -183,12 +238,8 @@ class FullTestResult(Result):
             flags.append("欠压")
         rows.append(("轨压标志", " / ".join(flags) if flags else "无",
                      f"0x{self.rail_flag:02X}"))
-        rows.append(("工作电流", f"{self.work_ua} uA",
-                     "NG 疑似短路" if self.work_ua >= SHORT_CURRENT_UA else "OK"))
-        rows.append(("休眠电流", f"{self.sleep_ua} uA",
-                     "NG 疑似短路" if self.sleep_ua >= SHORT_CURRENT_UA else "OK"))
-        rows.append(("工作电流原始码", f"0x{self.work_code:08X}", "—"))
-        rows.append(("休眠电流原始码", f"0x{self.sleep_code:08X}", "—"))
+        rows.extend(self._current_rows("工作", self.work_code, self.work_ua))
+        rows.extend(self._current_rows("休眠", self.sleep_code, self.sleep_ua))
         rows.append(("0xAC 测量数据",
                      " ".join(f"{b:02X}" for b in self.bt_data), "—"))
         rows.append(("正常 bank 系数",
@@ -322,8 +373,11 @@ class M1Result(Result):
     def rows(self):
         rows = [
             ("状态", status_text(self.status), "OK" if self.ok else "NG"),
-            ("待机电流码", f"0x{self.standby_code:04X}", "—"),
-            ("工作电流码", f"0x{self.work_code:04X}", "—"),
+            ("待机电流码", f"0x{self.standby_code:04X}"
+             f"（有符号 {signed16(self.standby_code)}）", "—"),
+            ("工作电流码", f"0x{self.work_code:04X}"
+             f"（有符号 {signed16(self.work_code)}）", "—"),
+            ("提示", "固件只回传低 16 位原始码，电流值无法准确换算", "—"),
         ]
         for i, value in enumerate(self.values):
             rows.append((f"M1 系数 0x{0x80 + i:02X}", f"0x{value:04X}", "—"))
