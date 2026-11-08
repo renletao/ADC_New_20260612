@@ -33,3 +33,6 @@ JLinkSettings.ini
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# ===== AI 助手本地记录（不入库）=====
+.workbuddy/
