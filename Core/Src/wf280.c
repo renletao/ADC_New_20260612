@@ -24,8 +24,9 @@
 #define WF280_CMD_BT_MEAS 0xACu
 /* 同族命令（见 Core/Inc/JH1400F.h）：0xAD 只测电桥，0xAE 只测温度，
    各返回 24 位原始数据（首字节是状态，后 3 字节大端）。 */
-#define WF280_CMD_B_MEAS 0xADu
-#define WF280_CMD_T_MEAS 0xAEu
+#define WF280_CMD_B_MEAS 0xAD
+#define WF280_CMD_T_MEAS 0xAE
+
 #define WF280_RETRY_COUNT 3u
 #define WF280_NORMAL_POLL_DELAY_MS 10u
 #define WF280_CMD_POLL_DELAY_MS 1u
@@ -36,6 +37,7 @@
 #define WF280_CURRENT_SHUNT_OHM 120u
 #define WF280_ADC_FULL_SCALE 8388608u
 #define WF280_SHORT_CURRENT_UA 20000u
+
 
 /* 轨压回读：DUT 轨经 R8(1K)/R9(1k) 1:1 分压接到 PB1 / ADC1_IN9（VDD_FB）。
    ADC 配的是 12 位 + 16 倍过采样、右移 0，所以满量程是 4095 * 16 = 65520，
@@ -140,7 +142,7 @@ static uint8_t wf280_read_meas(I2CInfo *bus, uint8_t command,
 /* 芯片的 24 位数据是有符号补码，符号扩展成 32 位方便上位机按 int32 解读。 */
 static uint32_t wf280_sign_extend24(uint32_t value)
 {
-    if (value & 0x00800000u) value |= 0xFF000000u;
+    if (value & 0x00800000) value |= 0xFF000000;
     return value;
 }
 
@@ -315,14 +317,14 @@ uint8_t WF280TestOutput(uint16_t supply_mv, uint16_t measurement,
     uint32_t current;
 
     if (!out || out_lens < WF280_OUTPUT_RESULT_LENGTH ||
-        (supply_mv != 2000u && supply_mv != 3300u))
+        (supply_mv != WF280_SUPPLY_1V8_MV && supply_mv != WF280_SUPPLY_3V3_MV))
         return WF280_STATUS_I2C;
     memset(out, 0, out_lens * sizeof(*out));
     wf280_save_adc_config(saved_config);
     MCP4725_WriteData_Voltage(supply_mv);
     /* The reference firmware gives the 2.0 V/M1 path substantially longer
        rail settling time before its short-circuit/current sample. */
-    osDelay(supply_mv == 2000u ? WF280_OUTPUT_2V_SETTLE_MS :
+    osDelay(supply_mv == WF280_SUPPLY_1V8_MV ? WF280_OUTPUT_2V_SETTLE_MS :
             WF280_OUTPUT_3V3_SETTLE_MS);
     current = wf280_read_current();
     if (wf280_is_short(current, supply_mv)) {
@@ -376,9 +378,9 @@ uint8_t WF280ReadCoefficients(uint8_t start, uint8_t count,
         out_lens < (uint16_t)(count + 1u)) return WF280_STATUS_I2C;
     memset(out, 0, out_lens * sizeof(*out));
     wf280_save_adc_config(saved_config);
-    supply_mv = (start & 0x80u) ? 2000u : 3300u;
+    supply_mv = (start & 0x80) ? WF280_SUPPLY_1V8_MV : WF280_SUPPLY_3V3_MV;
     MCP4725_WriteData_Voltage(supply_mv);
-    osDelay(100u);
+    osDelay(100);
 		//
     if (wf280_is_short(wf280_read_current(), supply_mv)) {
         out[0] = WF280_STATUS_SHORT;
@@ -425,10 +427,10 @@ uint8_t WF280ReadM1(uint8_t count, uint16_t *out, uint16_t out_lens)
     wf280_save_adc_config(saved_config);
     /* The 0x80..0x9F bank is the M1/2.0 V calibration bank in the
        reference firmware.  The new board selects that rail with the DAC. */
-    MCP4725_WriteData_Voltage(2000u);
+    MCP4725_WriteData_Voltage(WF280_SUPPLY_1V8_MV);
     osDelay(WF280_M1_SETTLE_MS);
     standby = wf280_read_current();
-    if (wf280_is_short(standby, 2000u)) {
+    if (wf280_is_short(standby, WF280_SUPPLY_1V8_MV)) {
         out[0] = WF280_STATUS_SHORT;
         out[1] = (uint8_t)standby;
         out[2] = (uint8_t)(standby >> 8);

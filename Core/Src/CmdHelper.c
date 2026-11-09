@@ -161,7 +161,7 @@ void ParseSystemCmd(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16
         case TYPE1_WF280_OUTDATA:
         case TYPE1_WF280_2V_OUTDATA:
             if (out_lens < WF280_OUTPUT_RESULT_LENGTH) out[0] = CMD_ERROR_LENGTH;
-            else (void)WF280TestOutput(cmdHead == TYPE1_WF280_2V_OUTDATA ? 2000u : 3300u,
+            else (void)WF280TestOutput(cmdHead == TYPE1_WF280_2V_OUTDATA ? WF280_SUPPLY_1V8_MV : WF280_SUPPLY_3V3_MV,
                                        cmd[2], cmd[3], out, out_lens);
             break;
         case TYPE1_WF280_RAIL: {

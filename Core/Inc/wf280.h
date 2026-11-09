@@ -46,6 +46,9 @@
 #define WF280_STATUS_SHORT 0xE1u
 #define WF280_STATUS_RAIL 0xE2
 
+#define WF280_SUPPLY_1V8_MV 1800
+#define WF280_SUPPLY_3V3_MV 3300
+
 void WF280CheckOtpReg(uint16_t *out, uint16_t out_lens);
 
 uint8_t WF280TestOutput(uint16_t supply_mv, uint16_t measurement,
