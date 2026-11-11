@@ -3,8 +3,8 @@
 
 逐条验证 WF280 的全部命令：
     Modbus 帧的 CRC / 功能码 / 寄存器地址（40000 写、30000 读）
-    cmd 0x14 的异步队列流程（触发 → 轮询 IsTaskDone → 取 76 个寄存器）
-    新结果帧的解码：状态、实测轨压、工作/休眠电流原始码与解析值、
+    cmd 0x14 的异步队列流程（触发 → 轮询 IsTaskDone → 取 77 个寄存器）
+    新结果帧的解码：状态、1.8 V / 3.3 V 两档实测轨压、工作/休眠电流原始码与解析值、
     0xAC 的 6 字节原始数据、M1 / NOR 两个 bank 的 32 路系数
     0x211 轨压、11 OTP、0x208/0x210 输出测试、0x209 系数、0x207 M1、0x201 设压
 
@@ -22,6 +22,7 @@ from wf280_proto import (
     COEFF_MAX,
     R_M1,
     R_NOR,
+    R_RAIL_1V8_MV,
     R_RAIL_MV,
     R_RAW,
     R_RAW_LEN,
@@ -47,13 +48,14 @@ SLEEP_RAW = 0xFFFFF831
 class FakeFirmwareSerial:
     """假串口：收到主站帧就按固件逻辑生成应答。"""
 
-    def __init__(self, *, rail_mv=3298, busy_polls=3, stuck=False,
-                 otp_fail=0, version=(1, 0), instant=False,
+    def __init__(self, *, rail_mv=3298, rail_1v8_mv=1796, busy_polls=3,
+                 stuck=False, otp_fail=0, version=(1, 0), instant=False,
                  status=0, holding_base=40000, input_base=30000):
         self.is_open = True
         self.rx = bytearray()
         self.tx_buffer = bytearray()
         self.rail_mv = rail_mv
+        self.rail_1v8_mv = rail_1v8_mv
         self.busy_polls = busy_polls
         self.stuck = stuck
         self.otp_fail = otp_fail          # 0=通过，非 0=第几路失败
@@ -92,11 +94,12 @@ class FakeFirmwareSerial:
     def _results(self) -> list[int]:
         regs = [0] * RESULT_LENGTH
         if self.status:
-            # 固件在失败点立即返回：只有首字有错误码，[1..75] 全 0
+            # 固件在失败点立即返回：只有首字有错误码，[1..76] 全 0
             regs[R_STATUS] = self.status
             return regs
 
         regs[R_STATUS] = 0
+        regs[R_RAIL_1V8_MV] = self.rail_1v8_mv
         regs[R_RAIL_MV] = self.rail_mv
         regs[R_WORK_RAW] = WORK_RAW & 0xFFFF          # 低 16 位在前
         regs[R_WORK_RAW + 1] = (WORK_RAW >> 16) & 0xFFFF
@@ -158,7 +161,7 @@ class FakeFirmwareSerial:
             self.send_buf[0] = 1                # 固件先回 1，结果要等 0x401
             self.done_regs = None
             if self.instant:
-                # 立刻测完：IsTaskDone 马上是 0，0x401 返回完整 76 个字
+                # 立刻测完：IsTaskDone 马上是 0，0x401 返回完整 77 个字
                 self.busy = False
                 self.done_regs = self._results()
             else:
@@ -273,10 +276,11 @@ def _():
     assert raw_to_ua(WORK_RAW, 0) == 0    # 没轨压不换算
 
 
-@case("结果帧：76 个寄存器按固件偏移解码")
+@case("结果帧：77 个寄存器按固件偏移解码")
 def _():
     regs = [0] * RESULT_LENGTH
     regs[R_STATUS] = 0
+    regs[R_RAIL_1V8_MV] = 1796
     regs[R_RAIL_MV] = 3296
     regs[R_WORK_RAW] = WORK_RAW & 0xFFFF
     regs[R_WORK_RAW + 1] = WORK_RAW >> 16
@@ -289,6 +293,7 @@ def _():
 
     result = FullTestResult(regs)
     assert result.status == 0 and result.status_ok
+    assert result.rail_1v8_mv == 1796 and result.rail_1v8_ok
     assert result.rail_mv == 3296
     assert result.work_raw == WORK_RAW
     assert result.sleep_raw == SLEEP_RAW
@@ -310,9 +315,10 @@ def _():
     assert not result.ok and result.coeff_mismatch == 0
 
 
-@case("结果帧：显示顺序是 整体 → 轨压 → 电流 → 原始数据 → 系数")
+@case("结果帧：显示顺序是 整体 → 两档轨压 → 电流 → 原始数据 → 系数")
 def _():
     result = FullTestResult([0] * RESULT_LENGTH)
+    result.regs[R_RAIL_1V8_MV] = 1796
     result.regs[R_RAIL_MV] = 3296
     result.regs[R_WORK_RAW] = WORK_RAW & 0xFFFF
     result.regs[R_WORK_RAW + 1] = WORK_RAW >> 16
@@ -327,17 +333,20 @@ def _():
     names = [row[0] for row in rows]
     assert names[0] == "测量整体", names
     assert names[1] == "状态字 [0]", names
-    assert names[2] == "轨压（实测）", names
-    assert names[3] == "工作电流原始码", names
-    assert names[4] == "工作电流（解析）", names
-    assert names[5] == "休眠电流原始码", names
-    assert names[6] == "休眠电流（解析）", names
-    assert names[7] == "0xAC 原始数据（6 字节）", names
+    assert names[2] == "轨压 1.8 V（实测）", names
+    assert names[3] == "轨压 3.3 V（实测）", names
+    assert names[4] == "工作电流原始码", names
+    assert names[5] == "工作电流（解析）", names
+    assert names[6] == "休眠电流原始码", names
+    assert names[7] == "休眠电流（解析）", names
+    assert names[8] == "0xAC 原始数据（6 字节）", names
     assert names[-1] == "M1 / NOR 系数", names
 
     by_name = {row[0]: row for row in rows}
     assert by_name["测量整体"][1] == "PASS"
-    assert by_name["轨压（实测）"][1] == "3296 mV"
+    assert by_name["轨压 1.8 V（实测）"][1] == "1796 mV"
+    assert by_name["轨压 1.8 V（实测）"][2] == "OK"
+    assert by_name["轨压 3.3 V（实测）"][1] == "3296 mV"
     assert "0xFFFD29AE" in by_name["工作电流原始码"][1]
     assert by_name["工作电流（解析）"][1].endswith("uA")
     assert by_name["工作电流（解析）"][2] == "OK"
@@ -385,7 +394,7 @@ def _():
     result.regs[R_RAIL_MV] = 0
     assert result.status_ok and not result.ok
     rows = {row[0]: row for row in result.rows()}
-    assert "NG" in rows["轨压（实测）"][2], rows
+    assert "NG" in rows["轨压 3.3 V（实测）"][2], rows
     assert "轨压未建立" in result.verdict_text()
 
 
@@ -459,13 +468,14 @@ def _():
     assert status_text(0xE2) == "轨压异常"
 
 
-@case("0x14 整套测试：异步流程与 76 字结果解码")
+@case("0x14 整套测试：异步流程与 77 字结果解码")
 def _():
     fake, tester = make_tester(rail_mv=3298)
     ticks: list[float] = []
     result = tester.run_full_test(interval=0.0, on_tick=ticks.append)
 
     assert result.ok and result.all_ok
+    assert result.rail_1v8_mv == 1796
     assert result.rail_mv == 3298
     assert result.work_raw == WORK_RAW
     assert result.sleep_raw == SLEEP_RAW

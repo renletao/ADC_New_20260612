@@ -3,7 +3,7 @@
 
 覆盖固件里 WF280 相关的全部命令：
 
-    cmd[0] = 0x14                  异步整套测试（IsTaskDone 队列）  76 寄存器
+    cmd[0] = 0x14                  异步整套测试（IsTaskDone 队列）  77 寄存器
     {1, 0x211}                     同步回读实际轨压                 状态 + mV
     {11}                           OTP 双 bank 校验                 结果 + 失败路号
     {1, 0x208, meas, settle}       输出测试 3.3 V                   状态 + 6 字节
@@ -15,12 +15,13 @@
 整套测试（AllTestFor280）的结果帧和固件 Core/Inc/wf280.h 一一对应：
 
     [0]        状态：0=OK，非 0=错误码
-    [1]        实测轨压 mV
-    [2..3]     工作电流原始码，低 16 位在前
-    [4..5]     休眠电流原始码，低 16 位在前
-    [6..11]    0xAC 读出的 6 字节（Status + 电桥 20 位 + 温度 20 位）
-    [12..43]   M1 bank 32 路系数原始值
-    [44..75]   NOR bank 32 路系数原始值
+    [1]        1.8 V 档实测轨压 mV（切 1.8 V 稳定后、读 M1 之前测）
+    [2]        3.3 V 档实测轨压 mV（切 3.3 V 稳定后、读 NOR 之前测）
+    [3..4]     工作电流原始码，低 16 位在前
+    [5..6]     休眠电流原始码，低 16 位在前
+    [7..12]    0xAC 读出的 6 字节（Status + 电桥 20 位 + 温度 20 位）
+    [13..44]   M1 bank 32 路系数原始值
+    [45..76]   NOR bank 32 路系数原始值
 
 固件只回传电流的**原始码**，uA 值由本工具按同一套常数换算，
 所以界面上的“解析电流”才是真实电流。
@@ -55,19 +56,20 @@ CMD_WF280_FULL_TEST = 0x14    # {0x14}  触发 AllTestFor280
 
 # ---------------- 固件常量 ----------------
 
-RESULT_LENGTH = 76            # WF280_TEST_RESULT_LENGTH
+RESULT_LENGTH = 77            # WF280_TEST_RESULT_LENGTH
 OUTPUT_RESULT_LENGTH = 7      # WF280_OUTPUT_RESULT_LENGTH
 COEFF_MAX = 32                # WF280_COEFF_MAX
 
 # 整套测试结果帧偏移（与 wf280.h 的 WF280_R_* 一致）
 R_STATUS = 0                  # 状态：0=OK，非 0=错误码
-R_RAIL_MV = 1                 # 实测轨压 mV
-R_WORK_RAW = 2                # 工作电流原始码，低 16 位在前
-R_SLEEP_RAW = 4               # 休眠电流原始码，低 16 位在前
-R_RAW = 6                     # 0xAC 读出的 6 字节原始数据，1 字节 1 寄存器
+R_RAIL_1V8_MV = 1             # 1.8 V 档实测轨压 mV
+R_RAIL_MV = 2                 # 3.3 V 档实测轨压 mV
+R_WORK_RAW = 3                # 工作电流原始码，低 16 位在前
+R_SLEEP_RAW = 5               # 休眠电流原始码，低 16 位在前
+R_RAW = 7                     # 0xAC 读出的 6 字节原始数据，1 字节 1 寄存器
 R_RAW_LEN = 6
-R_M1 = 12                     # M1 bank 32 路系数原始值
-R_NOR = 44                    # NOR bank 32 路系数原始值
+R_M1 = 13                     # M1 bank 32 路系数原始值
+R_NOR = 45                    # NOR bank 32 路系数原始值
 
 RAIL_MIN_MV = 1500
 RAIL_TOLERANCE_PCT = 10
@@ -97,6 +99,13 @@ STATUS_TEXT = {
 
 def status_text(code: int) -> str:
     return STATUS_TEXT.get(code, f"未定义状态 0x{code:04X}")
+
+
+def rail_in_level(mv: int, level: int) -> bool:
+    """mv 是否落在 level 档位 ±RAIL_TOLERANCE_PCT 的窗口内。"""
+    low = level * (100 - RAIL_TOLERANCE_PCT) // 100
+    high = level * (100 + RAIL_TOLERANCE_PCT) // 100
+    return low <= mv <= high
 
 
 # ---------------- 电流原始码换算 ----------------
@@ -198,11 +207,11 @@ class VersionResult(Result):
 
 @dataclass
 class FullTestResult(Result):
-    """AllTestFor280 的 76 个结果寄存器。
+    """AllTestFor280 的 77 个结果寄存器。
 
-    首字是状态，成功时后面依次是实测轨压、工作/休眠电流原始码、
+    首字是状态，成功时后面依次是 1.8 V / 3.3 V 两档实测轨压、工作/休眠电流原始码、
     0xAC 的 6 字节原始数据，最后是 M1 / NOR 两个 bank 各 32 路原始值。
-    失败时固件只写首字错误码，[1..75] 全 0。
+    失败时固件只写首字错误码，[1..76] 全 0。
     """
 
     regs: list[int] = field(default_factory=list)
@@ -214,6 +223,7 @@ class FullTestResult(Result):
         self.regs = regs
 
     status = property(lambda self: self.regs[R_STATUS])
+    rail_1v8_mv = property(lambda self: self.regs[R_RAIL_1V8_MV])
     rail_mv = property(lambda self: self.regs[R_RAIL_MV])
     work_raw = property(lambda self: self.regs[R_WORK_RAW]
                         | (self.regs[R_WORK_RAW + 1] << 16))
@@ -280,6 +290,15 @@ class FullTestResult(Result):
         return None
 
     @property
+    def rail_1v8_ok(self) -> bool:
+        """1.8 V 档轨压是否落在 1800 mV ±10%。
+
+        只用于界面展示这一档的电压是否正常；总判定仍然看 3.3 V 档，
+        这样老产线的 PASS/NG 规则不变。
+        """
+        return rail_in_level(self.rail_1v8_mv, 1800)
+
+    @property
     def ok(self) -> bool:
         """首字为 0、轨压真的建立、32 路系数逐路一致，才算这块板通过。"""
         return (self.status_ok and self.rail_mv >= RAIL_MIN_MV
@@ -312,7 +331,7 @@ class FullTestResult(Result):
             ("状态字 [0]", f"0x{self.status:04X}（{status_text(self.status)}）",
              "NG"),
             ("失败说明",
-             "固件在失败点立即返回，[1..75] 全 0，轨压 / 电流 / 原始数据 / "
+             "固件在失败点立即返回，[1..76] 全 0，轨压 / 电流 / 原始数据 / "
              "系数都没有测", "—"),
             ("建议",
              "先重测一次；仍失败就用「读 M1」「读系数」逐路比对定位",
@@ -325,9 +344,6 @@ class FullTestResult(Result):
         return [
             ("0xAC 原始数据（6 字节）",
              " ".join(f"{b:02X}" for b in self.raw), "—"),
-            ("芯片 Status",
-             f"0x{self.chip_status:02X}",
-             "OK" if self.chip_status == 0 else "NG"),
             ("电桥原始码（20 位）",
              f"0x{self.bridge_code:05X}（有符号 {signed20(self.bridge_code)}）",
              "—"),
@@ -356,7 +372,9 @@ class FullTestResult(Result):
         rows: list[tuple[str, str, str]] = [
             ("测量整体", "PASS", "OK"),
             ("状态字 [0]", "0x0000（OK）", "—"),
-            ("轨压（实测）", f"{self.rail_mv} mV",
+            ("轨压 1.8 V（实测）", f"{self.rail_1v8_mv} mV",
+             "OK" if self.rail_1v8_ok else "超差（参考）"),
+            ("轨压 3.3 V（实测）", f"{self.rail_mv} mV",
              "OK" if rail_ok else "NG 轨未建立"),
             ("工作电流原始码",
              f"0x{self.work_raw:08X}（{self.work_code}）", "—"),
@@ -584,7 +602,7 @@ class Wf280Tester:
         return self.read_results()
 
     def run_full_test_fixed(self, delay: float = 3.0) -> FullTestResult:
-        """产线流程：写 [14] → 等 delay 秒 → 写 [1,0x401] → 读 76 个寄存器。
+        """产线流程：写 [14] → 等 delay 秒 → 写 [1,0x401] → 读 77 个寄存器。
 
         不轮询 0x400，只靠固定延时；如果到点还没跑完，0x401 会回 0xF1，
         这里再补一次轮询，避免把“还在跑”误当成结果。

@@ -5,7 +5,7 @@
     ① 整套测试   固件 cmd[0] = 0x14，即 AllTestFor280 那条综合测试
     ② 单项命令   OTP / 输出测试 / 读系数 / 读 M1 / 轨压回读 / 设定电压
 
-整套测试的 76 个结果寄存器按产线关心的顺序展示：
+整套测试的 77 个结果寄存器按产线关心的顺序展示：
     测量整体 → 实测轨压 → 工作电流（原始码 + 解析值）→ 休眠电流（原始码 +
     解析值）→ 0xAC 的 6 字节原始数据 → M1 / NOR 两个 bank 各 32 路系数。
 """
@@ -180,7 +180,7 @@ class TestApp:
 
         head = ttk.Frame(card, style="Card.TFrame")
         head.pack(fill="x")
-        ttk.Label(head, text="AllTestFor280 · 76 个输入寄存器",
+        ttk.Label(head, text="AllTestFor280 · 77 个输入寄存器",
                   style="Head.TLabel").pack(side="left")
         ttk.Label(head,
                   text="固件自己切 1.8 V 读 M1、3.3 V 读 NOR 并逐路比对，"
@@ -203,7 +203,7 @@ class TestApp:
 
         ttk.Label(card,
                   text="流程：写 [0x14] → 轮询 [1,0x400] 等它跑完 → 写 [1,0x401] "
-                       "读 76 个字。实测约 2~3 s。",
+                       "读 77 个字。实测约 2~3 s。",
                   style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
 
         body = ttk.Frame(card, style="Card.TFrame")
@@ -629,7 +629,8 @@ class TestApp:
 
         if result.ok:
             self._log(
-                f"AllTestFor280 完成：PASS，轨压 {result.rail_mv} mV，"
+                f"AllTestFor280 完成：PASS，轨压 1.8 V {result.rail_1v8_mv} mV / "
+                f"3.3 V {result.rail_mv} mV，"
                 f"工作 {result.work_ua:.2f} uA（0x{result.work_raw:08X}），"
                 f"休眠 {result.sleep_ua:.2f} uA（0x{result.sleep_raw:08X}），"
                 f"M1/NOR 32 路一致", "ok")
