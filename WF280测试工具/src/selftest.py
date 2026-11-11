@@ -581,6 +581,11 @@ def _():
     tester.read_coeff(999)                 # 超上限应被夹到 COEFF_MAX
     assert fake.commands_seen[-1] == [1, 0x209, COEFF_MAX]
 
+    # 界面上的「3.3 V 读 NOR」按钮：固定 32 路一帧
+    full = tester.read_coeff(COEFF_MAX)
+    assert fake.commands_seen[-1] == [1, 0x209, 32]
+    assert full.ok and len(full.values) == 32
+
 
 @case("0x207 读 M1：电流码与系数")
 def _():
@@ -591,6 +596,11 @@ def _():
     assert result.standby_code == 0x1234
     assert result.work_code == 0x5678
     assert result.values == [0x8000, 0x8001, 0x8002]
+
+    # 界面上的「1.8 V 读 M1」按钮：固定 32 路一帧
+    full = tester.read_m1(COEFF_MAX)
+    assert fake.commands_seen[-1] == [1, 0x207, 32]
+    assert full.ok and len(full.values) == 32
 
 
 @case("0x201 设定轨压：低字节在前")

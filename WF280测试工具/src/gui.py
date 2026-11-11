@@ -277,7 +277,7 @@ class TestApp:
         ttk.Label(row, text="ms", style="Muted.TLabel").pack(side="left",
                                                              padx=(0, 10))
         ttk.Label(row, text="系数路数", style="Card.TLabel").pack(side="left")
-        self.count_var = tk.StringVar(value="4")
+        self.count_var = tk.StringVar(value="32")
         ttk.Entry(row, textvariable=self.count_var, width=4).pack(side="left",
                                                                   padx=(4, 0))
 
@@ -285,10 +285,22 @@ class TestApp:
         btns.pack(fill="x", pady=(0, 8))
         for text, action in (("OTP 校验", "otp"),
                              ("输出 3.3 V", "out33"), ("输出 1.8 V", "out18"),
-                             ("读系数", "coeff"), ("读 M1", "m1")):
+                             ("读系数（按路数）", "coeff"),
+                             ("读 M1（按路数）", "m1")):
             ttk.Button(btns, text=text,
                        command=lambda a=action: self._on_cmd(a)).pack(
                 side="left", padx=(0, 6))
+
+        fixed = ttk.Frame(card, style="Card.TFrame")
+        fixed.pack(fill="x", pady=(0, 8))
+        ttk.Label(fixed, text="全 32 路", style="Card.TLabel").pack(side="left")
+        ttk.Button(fixed, text="3.3 V 读 NOR（0x209）",
+                   command=lambda: self._on_cmd("nor32")).pack(
+            side="left", padx=(8, 6))
+        ttk.Button(fixed, text="1.8 V 读 M1（0x207）",
+                   command=lambda: self._on_cmd("m1_32")).pack(side="left")
+        ttk.Label(fixed, text="不用先设压，固件自己切 3.3 V / 1.8 V",
+                  style="Muted.TLabel").pack(side="left", padx=(10, 0))
 
         rail = ttk.Frame(card, style="Card.TFrame")
         rail.pack(fill="x", pady=(0, 6))
@@ -318,7 +330,8 @@ class TestApp:
                   text="提示：输出测试正常结束后会保持供电，可直接点「读取轨压」；"
                        "整套测试 / 读系数 / 读 M1 结束时仍会断电，这时读到接近 0 mV "
                        "是正常的，要看带电轨压请用「设压并回读」。"
-                       "M1 bank 走 1.8 V，正常 bank 走 3.3 V。",
+                       "M1 bank 走 1.8 V，正常 bank 走 3.3 V；"
+                       "「3.3 V 读 NOR」「1.8 V 读 M1」由固件自己切压，不用先设压。",
                   style="Muted.TLabel", wraplength=960).pack(anchor="w", pady=(0, 6))
 
         self.item_tree = self._tree(card, 8, (
@@ -704,10 +717,12 @@ class TestApp:
             return
         if self._busy_guard():
             return
-        params = self._read_params()
-        if params is None:
-            return
-        measurement, settle, count = params
+        measurement = settle = count = 0
+        if action in ("out33", "out18", "coeff", "m1"):
+            params = self._read_params()
+            if params is None:
+                return
+            measurement, settle, count = params
 
         jobs = {
             "otp": ("OTP 校验", lambda: self.tester.read_otp()),
@@ -717,6 +732,10 @@ class TestApp:
                       lambda: self.tester.test_output_1v8(measurement, settle)),
             "coeff": (f"读系数（{count} 路）", lambda: self.tester.read_coeff(count)),
             "m1": (f"读 M1（{count} 路）", lambda: self.tester.read_m1(count)),
+            "nor32": ("3.3 V 读 NOR（32 路）",
+                      lambda: self.tester.read_coeff(COEFF_MAX)),
+            "m1_32": ("1.8 V 读 M1（32 路）",
+                      lambda: self.tester.read_m1(COEFF_MAX)),
         }
         label, work = jobs[action]
 

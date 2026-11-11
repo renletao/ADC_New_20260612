@@ -20,8 +20,8 @@
     python wf280_tool.py --port COM5 otp             OTP 校验
     python wf280_tool.py --port COM5 out33          输出测试 3.3 V
     python wf280_tool.py --port COM5 out18          输出测试 1.8 V
-    python wf280_tool.py --port COM5 coeff --count 4 读系数
-    python wf280_tool.py --port COM5 m1 --count 4    读 M1
+    python wf280_tool.py --port COM5 coeff          3.3 V 读 NOR 32 路
+    python wf280_tool.py --port COM5 m1             1.8 V 读 M1 32 路
     python wf280_tool.py --port COM5 vdd --mv 3300   设定轨压
     python wf280_tool.py ports                       列出串口
 
@@ -65,8 +65,8 @@ def cli(argv: list[str]) -> int:
     parser.add_argument("--slave", type=int, default=1, help="从机地址，默认 1")
     parser.add_argument("--timeout", type=float, default=60.0,
                         help="整套测试超时秒数，默认 60（实测整套约 2~3 s）")
-    parser.add_argument("--count", type=int, default=4,
-                        help=f"系数路数，默认 4（上限 {COEFF_MAX}）")
+    parser.add_argument("--count", type=int, default=COEFF_MAX,
+                        help=f"系数路数，默认 {COEFF_MAX}（上限 {COEFF_MAX}）")
     parser.add_argument("--meas", default="0x0000",
                         help="0xAC 测量参数，默认 0x0000")
     parser.add_argument("--settle", type=int, default=None,
