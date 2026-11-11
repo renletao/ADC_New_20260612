@@ -59,6 +59,7 @@
 
 uint16_t otp1[32];
 uint16_t otp2[32];
+static int32_t ADC_Value_280 = 0;
 
 static uint8_t wf280_write(I2CInfo *bus, uint8_t command,
                            const uint8_t *params, uint8_t param_count)
@@ -442,7 +443,7 @@ uint8_t WF280ReadM1(uint8_t count, uint16_t *out, uint16_t out_lens)
 
 void AllTestFor280(uint16_t *out, uint16_t out_lens)
 {
-    I2CInfo bus;
+		I2CInfo bus;
     uint8_t saved_config[4];
     uint8_t params[2];
     uint8_t data[WF280_R_RAW_LEN] = {0};
@@ -452,13 +453,28 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
     uint32_t sleep_code;
     uint32_t work_code = 0;
 		
-		/*1、开1.8电*/
-		MCP4725_WriteData_Voltage(WF280_SUPPLY_1V8_MV);
+		/* 0) 校验和现场备份必须放最前面 */
+    if (!out || out_lens < WF280_TEST_RESULT_LENGTH) return;
+    memset(out, 0, out_lens * sizeof(*out));
+    wf280_save_adc_config(saved_config);
+
+    /* 1) 开 1.8 V，做短路预检 */
+    MCP4725_WriteData_Voltage(WF280_SUPPLY_1V8_MV);
+    osDelay(300);          /* 300 ms，等轨压和 ADC 通道建立 */
+    work_code = wf280_read_current();       /* 内部切电流通道 + 等 10 ms */
+    if (wf280_current_ua(work_code, WF280_SUPPLY_1V8_MV) >= WF280_SHORT_1V8_UA) {
+        out[WF280_R_WORK_RAW]     = (uint16_t)(work_code & 0xFFFFu);
+        out[WF280_R_WORK_RAW + 1] = (uint16_t)(work_code >> 16);
+        out[WF280_R_MEAS_ERR] = WF280_STATUS_SHORT;   /* 0xE1 → 上位机判 NG「电流短路」 */
+        wf280_restore_adc_config(saved_config);
+        wf280_power_off();
+        return;
+    }
 		/*读M1系数*/
 		
 		/*切3.3电*/
 		MCP4725_WriteData_Voltage(WF280_SUPPLY_3V3_MV);
-		/*读NOR，32位读一位比较一位，不同退出，同往下执行*/
+		/*读NOR，32位路数据一位比较一位，不同退出，同往下执行*/
     if (!out || out_lens < WF280_TEST_RESULT_LENGTH) return;
     memset(out, 0, out_lens * sizeof(*out));
     wf280_save_adc_config(saved_config);
@@ -467,31 +483,6 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
     osDelay(WF280_OUTPUT_3V3_SETTLE_MS);
     rail_mv = WF280ReadRailMv();
     out[WF280_R_RAIL_MV] = rail_mv;
-//    if (rail_mv < WF280_RAIL_MIN_MV) {
-//        wf280_restore_adc_config(saved_config);
-//        wf280_power_off();
-//        return;
-//    }
-
-//		/* 先复位 DUT，等它回到休眠，再测休眠电流 */
-//    wf280_open(&bus);
-//    status = wf280_set_cmd(&bus, WF280_CMD_RESET, NULL, 0, 0, 10);
-//    wf280_close(&bus);
-//    if (status != WF280_STATUS_OK) {
-//        out[WF280_R_MEAS_ERR] = status;
-//        wf280_restore_adc_config(saved_config);
-//        return;
-//    }
-//    osDelay(WF280_SLEEP_ENTER_MS);   /* 按手册“复位后进入休眠”的时间，先给 200 ms */
-
-    /* 2) 休眠电流 + 短路判定。短路时温度气压没有意义，直接返回。 */
-//    sleep_code = wf280_read_min_current();
-//    out[WF280_R_SLEEP_UA] = wf280_current_ua(sleep_code, rail_mv);
-//    if (wf280_is_short(sleep_code, rail_mv)) {
-//        wf280_restore_adc_config(saved_config);
-//        wf280_power_off();
-//        return;
-//    }
 
     /* 3) 复位 + 0xAC 测量，测量进行中抓工作电流。 */
     wf280_open(&bus);
@@ -504,7 +495,9 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
     }
     if (status == WF280_STATUS_OK) {
         work_code = wf280_read_current();
-        out[WF280_R_WORK_UA] = wf280_current_ua(work_code, rail_mv);
+        out[WF280_R_WORK_RAW]     = (uint16_t)(work_code & 0xFFFFu);
+        out[WF280_R_WORK_RAW + 1] = (uint16_t)(work_code >> 16);
+
         osDelay(WF280_TEST_MEASURE_MS);
         status = wf280_wait_idle(&bus, 0, 2, WF280_RETRY_COUNT);
     }
@@ -519,12 +512,25 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
 		
 		osDelay(1000);/*延时1s进入休眠*/
 		sleep_code = wf280_read_min_current();
-    out[WF280_R_SLEEP_UA] = wf280_current_ua(sleep_code, rail_mv);
-    if (wf280_is_short(sleep_code, rail_mv)) {
-        wf280_restore_adc_config(saved_config);
-        wf280_power_off();
-        return;
-    }
+		out[WF280_R_SLEEP_RAW]     = (uint16_t)(sleep_code & 0xFFFF);
+    out[WF280_R_SLEEP_RAW + 1] = (uint16_t)(sleep_code >> 16);
+		
+		//		/* 先复位 DUT，等它回到休眠，再测休眠电流 */
+//    wf280_open(&bus);
+//    status = wf280_set_cmd(&bus, WF280_CMD_RESET, NULL, 0, 0, 10);
+//    wf280_close(&bus);
+//    if (status != WF280_STATUS_OK) {
+//        out[WF280_R_MEAS_ERR] = status;
+//        wf280_restore_adc_config(saved_config);
+//        return;
+//    }
+//    osDelay(WF280_SLEEP_ENTER_MS);   /* 按手册“复位后进入休眠”的时间，先给 200 ms */
+
+    /* 2) 休眠电流 + 短路判定。短路时温度气压没有意义，直接返回。 */
+//    sleep_code = wf280_read_min_current();
+//    out[WF280_R_SLEEP_RAW]     = (uint16_t)(sleep_code & 0xFFFF);
+//			out[WF280_R_SLEEP_RAW + 1] = (uint16_t)(sleep_code >> 16); 
+		
 		
     /* 5) 恢复 ADC 配置。 */
     wf280_restore_adc_config(saved_config);

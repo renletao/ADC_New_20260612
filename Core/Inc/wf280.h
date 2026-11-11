@@ -11,14 +11,15 @@
 #define WF280_COEFF_MAX 32u
 
 /* AllTestFor280 (cmd = 14) 的结果帧长度，占用 30000 起的 10 个输入寄存器。*/
-#define WF280_TEST_RESULT_LENGTH 10
+#define WF280_TEST_RESULT_LENGTH 12
 
-#define WF280_R_RAIL_MV   0
-#define WF280_R_WORK_UA   1
-#define WF280_R_SLEEP_UA  2
-#define WF280_R_RAW       3   /* 0xAC 读出的 6 字节原始数据，1 字节 1 寄存器 */
-#define WF280_R_RAW_LEN   6
-#define WF280_R_MEAS_ERR  9   /* 测量错误码（0=OK） */
+#define WF280_R_RAIL_MV    0
+#define WF280_R_WORK_RAW   1   /* 工作电流原始码，低 16 位在前 */
+#define WF280_R_SLEEP_RAW  3   /* 休眠电流原始码，低 16 位在前 */
+#define WF280_R_RAW        5   /* 0xAC 读出的 6 字节原始数据，1 字节 1 寄存器 */
+#define WF280_R_RAW_LEN    6
+#define WF280_R_MEAS_ERR  11   /* I2C测量错误码（0=OK） */
+
 
 /* The WF280 adapter keeps the command/status convention used by the
    WF280_OS_BURN reference program.  A zero status is success; non-zero
@@ -32,6 +33,9 @@
 
 #define WF280_SUPPLY_1V8_MV 1800
 #define WF280_SUPPLY_3V3_MV 3300
+/* 1.8 V 下满量程只有 15 mA，短路阈值必须低于它 */
+#define WF280_SHORT_1V8_UA 10000u
+
 
 void WF280CheckOtpReg(uint16_t *out, uint16_t out_lens);
 
