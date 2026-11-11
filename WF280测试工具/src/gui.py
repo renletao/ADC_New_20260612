@@ -2,7 +2,7 @@
 """图形界面（tkinter）。由 wf280_tool.py 在无参数时调用。
 
 三块功能严格分开，互不串联：
-    ① 整机测试   固件 cmd[0] = 14，即 AllTestFor280 那条综合测试
+    ① 整机测试   固件 cmd[0] = 0x14，即 AllTestFor280 那条综合测试
     ② 轨压回读   {1, 0x211}
     ③ 单项命令   OTP / 输出测试 / 读系数 / 读 M1 / 设定电压
 
@@ -20,6 +20,7 @@ from tkinter import ttk
 from mb_rtu import RtuMaster
 from wf280_proto import (
     COEFF_MAX,
+    SHORT_CURRENT_UA,
     FullTestResult,
     RailReading,
     Wf280Tester,
@@ -169,7 +170,7 @@ class TestApp:
 
     def _build_full_card(self, parent) -> None:
         card = self._card(parent, "① 整机测试",
-                          "AllTestFor280    cmd[0] = 14    异步，先设电压再测")
+                          "AllTestFor280    cmd[0] = 0x14    取数：轮询 / 固定 1 s")
 
         row = ttk.Frame(card, style="Card.TFrame")
         row.pack(fill="x", pady=(8, 6))
@@ -184,6 +185,9 @@ class TestApp:
         self.full_btn = ttk.Button(row, text="开始整机测试",
                                    command=self._on_full_test)
         self.full_btn.pack(side="left")
+        self.full_delay_btn = ttk.Button(row, text="整机测试(1s)", width=14,
+                                         command=self._on_full_test_delay)
+        self.full_delay_btn.pack(side="left", padx=(6, 0))
         self.full_status = ttk.Label(row, text="待测", style="Card.TLabel")
         self.full_status.pack(side="left", padx=(12, 0))
         self.full_verdict = ttk.Label(row, text="", style="Card.TLabel",
@@ -490,28 +494,35 @@ class TestApp:
     # ---------- ① 整机测试（AllTestFor280）----------
 
     def _on_full_test(self) -> None:
+        self._start_full(
+            "流程：写 [0x14] → 轮询 [1,0x400] → 写 [1,0x401] 读 10 字",
+            lambda: self.tester.run_full_test(
+                on_tick=lambda e: self._post_status(f"测试中… {e:.1f} s")))
+
+    def _on_full_test_delay(self) -> None:
+        self._start_full(
+            "流程：写 [0x14] → 等 1 s → 写 [1,0x401] → 读 10 个寄存器",
+            self.tester.run_full_test_fixed)
+
+    def _start_full(self, note, worker) -> None:
         if self.tester is None:
             self._log("请先连接串口", "err")
             return
-        mv = self._voltage()
-        if mv is None:
-            return
-        self.full_btn.configure(state="disabled")
+        self._set_full_busy(True)
         self.full_status.configure(text="测试中…", foreground=ACCENT)
         self.full_verdict.configure(text="")
         for item in self.full_tree.get_children():
             self.full_tree.delete(item)
-        self._log(f"设定电压 {mv} mV → 触发整机测试 cmd[0]=14（AllTestFor280）")
+        self._log(f"触发整机测试 cmd[0]=0x14（AllTestFor280）；{note}；"
+                  "轨压沿用当前设定，本工具不自动设压")
 
         def work():
-            # 先发 0x201 设置输出电压，再触发整机测试；固件回读实际轨压并按它测试。
-            self.tester.set_supply(mv)
-            time.sleep(0.3)
-            return self.tester.run_full_test(on_tick=lambda e: self._post_status(
-                f"测试中… {e:.1f} s"))
+            # 整机测试自己不开电：轨压必须事先由使用者用「设定电压」设好，
+            # 固件只回读实际轨压并按它换算电流。
+            return worker()
 
         def done(result, error):
-            self.full_btn.configure(state="normal")
+            self._set_full_busy(False)
             self.full_status.configure(text="完成", foreground=MUTED)
             if error:
                 self.full_verdict.configure(text="中断", foreground=NG_COLOR)
@@ -521,17 +532,31 @@ class TestApp:
 
         self._run_async(work, done)
 
+    def _set_full_busy(self, busy: bool) -> None:
+        state = "disabled" if busy else "normal"
+        for btn in (self.full_btn, self.full_delay_btn):
+            btn.configure(state=state)
+
     def _show_full_result(self, result: FullTestResult) -> None:
         self._show_rows(self.full_tree, result.rows())
         if result.all_ok:
             self.full_verdict.configure(text="PASS", foreground=OK_COLOR)
             self._log(f"AllTestFor280 完成：PASS，实测 {result.rail_mv} mV，"
                       f"工作 {result.work_ua} uA / 休眠 {result.sleep_ua} uA", "ok")
-        else:
-            self.full_verdict.configure(
-                text=f"NG（{status_text(result.status)}）", foreground=NG_COLOR)
-            self._log(f"AllTestFor280 完成：NG，{status_text(result.status)}，"
-                      f"实测 {result.rail_mv} mV", "err")
+            return
+        # 精简帧没有总状态字，逐项归纳失败原因
+        problems = []
+        if not result.rail_mv:
+            problems.append("轨压未建立")
+        if result.sleep_ua >= SHORT_CURRENT_UA \
+                or result.work_ua >= SHORT_CURRENT_UA:
+            problems.append("疑似短路")
+        if result.meas_err:
+            problems.append(f"测量失败（{status_text(result.meas_err)}）")
+        reason = "；".join(problems) if problems else "数据异常"
+        self.full_verdict.configure(text="NG", foreground=NG_COLOR)
+        self._log(f"AllTestFor280 完成：NG，{reason}，实测 {result.rail_mv} mV",
+                  "err")
 
     # ---------- ② 轨压 ----------
 

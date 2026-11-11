@@ -3,7 +3,7 @@
 
 逐条验证 WF280 的全部命令：
     Modbus 帧的 CRC / 功能码 / 寄存器地址（40001 写、30001 读）
-    cmd 14 的异步队列流程（触发 → 轮询 IsTaskDone → 取结果）
+    cmd 0x14 的异步队列流程（触发 → 轮询 IsTaskDone → 取结果）
     0x211 轨压、11 OTP、0x208/0x210 输出测试、0x209 系数、0x207 M1、0x201 设压
 
 运行：python selftest.py
@@ -18,16 +18,17 @@ import mb_rtu
 from mb_rtu import RtuMaster
 from wf280_proto import (
     COEFF_MAX,
-    RAIL_FLAG_MEASURED,
-    RAIL_FLAG_UNDER,
-    R_BRIDGE,
-    R_COEFF_ALL,
-    R_M1_COEFF_ALL,
-    R_TEMP,
+    R_MEAS_ERR,
+    R_RAIL_MV,
+    R_RAW,
+    R_RAW_LEN,
+    R_WORK_UA,
+    R_SLEEP_UA,
     RESULT_LENGTH,
     FullTestResult,
     Wf280Tester,
     raw_to_ua,
+    signed20,
     signed24,
     status_text,
 )
@@ -39,7 +40,7 @@ class FakeFirmwareSerial:
     """假串口：收到主站帧就按固件逻辑生成应答。"""
 
     def __init__(self, *, rail_mv=3298, busy_polls=3, stuck=False,
-                 otp_fail=0, version=(1, 0),
+                 otp_fail=0, version=(1, 0), instant=False,
                  holding_base=40000, input_base=30000):
         self.is_open = True
         self.rx = bytearray()
@@ -49,6 +50,7 @@ class FakeFirmwareSerial:
         self.stuck = stuck
         self.otp_fail = otp_fail          # 0=通过，非 0=第几路失败
         self.version = version
+        self.instant = instant            # 新固件：测完直接把结果铺进 sendBuf
         self.holding_base = holding_base  # 真板子实测是 40000/30000（0 基）
         self.input_base = input_base
         self.busy = False
@@ -78,27 +80,12 @@ class FakeFirmwareSerial:
     # ---------- 假固件行为 ----------
     def _results(self) -> list[int]:
         regs = [0] * RESULT_LENGTH
-        regs[1] = self.rail_mv
-        regs[2] = 3300
-        regs[3] = RAIL_FLAG_MEASURED
-        regs[4] = 850
-        regs[5] = 12
-        for i, byte in enumerate(b"\x11\x22\x33\x44"):
-            regs[6 + i] = byte
-        for i, byte in enumerate(b"\x05\x06\x07\x08"):
-            regs[10 + i] = byte
-        for i, byte in enumerate(b"\xA1\xA2\xA3\xA4\xA5\xA6"):
-            regs[14 + i] = byte
-        regs[20], regs[21] = 0x1234, 0x5678
-        regs[22], regs[23] = 0x9ABC, 0xDEF0
-        # 电桥 0x00ABCD（正）、温度 0xFF1234（负），验证符号扩展
-        for i, byte in enumerate((0x00ABCD).to_bytes(4, "little")):
-            regs[R_BRIDGE + i] = byte
-        for i, byte in enumerate((0xFF1234).to_bytes(4, "little")):
-            regs[R_TEMP + i] = byte
-        for i in range(COEFF_MAX):
-            regs[R_COEFF_ALL + i] = 0x1234 + i
-            regs[R_M1_COEFF_ALL + i] = 0x9ABC + i
+        regs[R_RAIL_MV] = self.rail_mv
+        regs[R_WORK_UA] = 850
+        regs[R_SLEEP_UA] = 12
+        # 0xAC 六字节原始数据：d0=芯片 Status，
+        # 按手册 4.3 打包：电桥 0x2ABCD（正）、温度 0xF1234（负，-0xEDCC）
+        regs[R_RAW:R_RAW + R_RAW_LEN] = [0x00, 0x2A, 0xBC, 0xDF, 0x12, 0x34]
         return regs
 
     def _handle_request(self):
@@ -144,11 +131,16 @@ class FakeFirmwareSerial:
             self.send_buf[0] = 0xF1
             return
 
-        if cmd[0] == 14:                      # 异步整机测试
-            self.busy = True
-            self.busy_polls = 3
+        if cmd[0] == 0x14:                      # 异步整机测试
             self.send_buf = [0] * 120
-            self.send_buf[0] = 1
+            if self.instant:
+                # 新固件：测试结束即把 sendBufBy 铺进 sendBuf，纯读即可取到
+                self.busy = False
+                self.send_buf[:RESULT_LENGTH] = self._results()
+            else:
+                self.busy = True
+                self.busy_polls = 3
+                self.send_buf[0] = 1
             return
 
         if cmd[0] == 11:                      # OTP 校验
@@ -254,18 +246,18 @@ def _():
     assert raw_to_ua(0xFFFD29AE, 0) == 0    # 没轨压不换算
 
 
-@case("电流显示：按原始码算出实际值，不标“推算”")
+@case("电流显示：直接显示固件回传的 uA 值")
 def _():
     result = FullTestResult([0] * RESULT_LENGTH)
-    result.regs[1] = 3296          # 实测轨压
-    result.regs[4] = 0             # 固件给的工作电流 0（小于 1 uA 会被截断）
-    for i, byte in enumerate(b"\xAE\x29\xFD\xFF"):
-        result.regs[6 + i] = byte
+    result.regs[R_RAIL_MV] = 3296      # 实测轨压
+    result.regs[R_WORK_UA] = 608       # 固件回传的工作电流
+    result.regs[R_SLEEP_UA] = 12
     texts = {row[0]: row for row in result.rows()}
     assert "工作电流" in texts, list(texts)
     value = float(texts["工作电流"][1].split()[0])
-    assert 605 <= value <= 612, value
-    assert not any("推算" in name for name in texts), list(texts)
+    assert value == 608.0, value
+    assert texts["工作电流"][2] == "OK"
+    assert texts["休眠电流"][2] == "OK"
 
 
 @case("CRC16 标准向量")
@@ -325,7 +317,7 @@ def _():
     assert status_text(0xE2) == "轨压异常"
 
 
-@case("14 整机测试：异步流程与结果解码")
+@case("0x14 整机测试：异步流程与结果解码")
 def _():
     fake, tester = make_tester(rail_mv=3298)
     ticks: list[float] = []
@@ -334,52 +326,59 @@ def _():
     assert result.ok and result.all_ok
     assert result.rail_mv == 3298
     assert (result.work_ua, result.sleep_ua) == (850, 12)
-    assert result.work_code == 0x44332211
-    assert result.sleep_code == 0x08070605
-    assert result.bt_data == [0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6]
-    assert result.coeff == [0x1234, 0x5678]
-    assert result.m1_coeff == [0x9ABC, 0xDEF0]
-    # 扩展区：压力/温度原始码按 24 位有符号解释，两个 bank 全量系数
-    assert result.bridge_code == 0x00ABCD
-    assert signed24(result.bridge_code) == 0xABCD
-    assert result.temp_code == 0xFF1234
-    assert signed24(result.temp_code) == -0xEDCC
-    assert result.coeff_all[:3] == [0x1234, 0x1235, 0x1236]
-    assert result.coeff_all[-1] == 0x1234 + COEFF_MAX - 1
-    assert result.m1_coeff_all[0] == 0x9ABC
-    assert result.m1_coeff_all[-1] == 0x9ABC + COEFF_MAX - 1
+    # 0xAC 六字节原样转存；电桥/温度按手册 4.3 的 20 位打包拆开
+    assert result.raw == [0x00, 0x2A, 0xBC, 0xDF, 0x12, 0x34]
+    assert result.chip_status == 0x00
+    assert result.bridge_code == 0x2ABCD
+    assert signed20(result.bridge_code) == 0x2ABCD
+    assert result.temp_code == 0xF1234
+    assert signed20(result.temp_code) == -0xEDCC
+    assert result.meas_err == 0
     assert len(result.regs) == RESULT_LENGTH
-    # 头两路是芯片 ID 高低字，不是系数
-    assert result.chip_id == 0x12341235
     names = [row[0] for row in result.rows()]
-    assert "芯片 ID（系数 0x00/0x01）" in names, names
-    assert "正常系数 0x00-0x07" not in names, names
-    assert "正常系数 0x02-0x09" in names, names
+    assert "电桥原始码（20 位）" in names and "温度原始码（20 位）" in names, names
     assert ticks, "应当至少有一次进度回调"
-    assert fake.commands_seen[0] == [14]
+    assert fake.commands_seen[0] == [0x14]
     assert [1, 0x400] in fake.commands_seen
     assert fake.commands_seen[-1] == [1, 0x401]
 
 
-@case("14 整机测试：轨欠压 → 0xE2")
+@case("0x14 整机测试：轨压为 0 → NG 轨未建立")
 def _():
-    fake, tester = make_tester(rail_mv=1200)
+    fake, tester = make_tester()
     original = fake._results
 
-    def under_voltage():
+    def no_rail():
         regs = original()
-        regs[1] = 1200
-        regs[3] = RAIL_FLAG_MEASURED | RAIL_FLAG_UNDER
-        regs[0] = 0xE2
+        regs[R_RAIL_MV] = 0
         return regs
 
-    fake._results = under_voltage
+    fake._results = no_rail
     result = tester.run_full_test(interval=0.0)
-    assert result.status == 0xE2 and not result.all_ok
-    assert "轨未建立" in result.rail_verdict
+    assert not result.all_ok and result.rail_mv == 0
+    rows = {row[0]: row for row in result.rows()}
+    assert "NG" in rows["轨压（实测）"][2], rows
 
 
-@case("14 整机测试：超时保护")
+@case("0x14 整机测试：测量错误码非 0 → NG")
+def _():
+    fake, tester = make_tester()
+    original = fake._results
+
+    def meas_fail():
+        regs = original()
+        regs[R_MEAS_ERR] = 0x01       # WF280_STATUS_I2C
+        return regs
+
+    fake._results = meas_fail
+    result = tester.run_full_test(interval=0.0)
+    assert not result.all_ok and result.meas_err == 0x01
+    rows = {row[0]: row for row in result.rows()}
+    assert "NG" in rows["电桥/温度原始数据"][2] \
+        and "I2C" in rows["电桥/温度原始数据"][2], rows
+
+
+@case("0x14 整机测试：超时保护")
 def _():
     _, tester = make_tester(stuck=True)
     try:
@@ -388,6 +387,23 @@ def _():
         assert "超时" in str(exc)
     else:
         raise AssertionError("应当在超时后抛异常")
+
+
+@case("0x14 整机测试（固定 1 s 版）：写 [0x14] → 等 → 写 0x401 → 读 10 字")
+def _():
+    fake, tester = make_tester(rail_mv=3298, instant=True)
+    result = tester.run_full_test_fixed(delay=0.0)   # 测试里把 1 s 省掉
+    assert result.ok and result.rail_mv == 3298
+    assert (result.work_ua, result.sleep_ua) == (850, 12)
+    # 不轮询 0x400，但保留 0x401 取数
+    assert fake.commands_seen == [[0x14], [1, 0x401]], fake.commands_seen
+
+
+@case("0x14 整机测试（固定 1 s 版）：1 s 内没跑完 → 首字是 0xF1 忙")
+def _():
+    _, tester = make_tester(rail_mv=3298)     # 假固件要 3 次轮询才算完成
+    result = tester.run_full_test_fixed(delay=0.0)
+    assert result.regs[0] == 0xF1
 
 
 @case("11 OTP 校验：通过 / 不一致")

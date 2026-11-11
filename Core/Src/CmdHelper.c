@@ -142,7 +142,11 @@ void ParseSystemCmd(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16
             break;
         case TYPE1_GET_ALLTEST_DATA:
             if (IsTaskDone) out[0] = CMD_ERROR_BUSY;
-            else memcpy(out, sendBufBy, (out_lens < PRODUCT_RESULT_LENGTH ? out_lens : PRODUCT_RESULT_LENGTH) * sizeof(*out));
+            else 
+						{
+								memcpy(out, sendBufBy, (out_lens < PRODUCT_RESULT_LENGTH ? out_lens : PRODUCT_RESULT_LENGTH) * sizeof(*out));
+								//out[0]=1;
+						}
             break;
         case TYPE1_WF3050_FT_DATA:
             if (out_lens < 12u) out[0] = CMD_ERROR_LENGTH;

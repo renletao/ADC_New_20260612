@@ -188,30 +188,21 @@ int main(void){
         wf280_out[0]==WF280_STATUS_I2C&&power_off==1&&voltage==0);
 reset();adc_raw=0xFFFFFF;assert(WF280TestOutput(2000,0x1234,5,wf280_out,40)==WF280_STATUS_SHORT&&
         wf280_out[0]==WF280_STATUS_SHORT&&writes==0&&power_off==1&&voltage==0);
-/* cmd=14 整机测试：轨压回读 + 休眠/工作电流 + 压力/温度 + 全量系数，结束断电。
+/* cmd=14 整机测试（精简 10 字帧）：轨压 + 休眠/工作电流 + 0xAC 六字节原始转存 + 测量错误码，结束断电。
    rail_code=32760 对应 65520 的 50 %，即 VDDA*2/2 = 3300 mV。
-   0xAD 读回 AE AF B0（bit23 为 1）符号扩展后是 FFAEAFB0；
-   0xAE 读回 AF B0 B1 符号扩展后是 FFAFB0B1。 */
+   0xAC 读回 AC AD AE AF B0 B1（Status + 5 字节打包），按手册 4.3 拆包：
+   电桥 = AD<<12|AE<<4|AF>>4 = 0xADAEF，温度 = (AF&0xF)<<16|B0<<8|B1 = 0xAF0B1。 */
 reset();AllTestFor280(wf280_out,96);
-assert(wf280_out[WF280_R_STATUS]==0&&wf280_out[WF280_R_RAIL_MV]==3300&&
-       wf280_out[WF280_R_RAIL_SET]==3300&&
-       wf280_out[WF280_R_RAIL_FLAG]==WF280_RAIL_FLAG_MEASURED&&
+assert(wf280_out[WF280_R_RAIL_MV]==3300&&
        wf280_out[WF280_R_WORK_UA]==3911&&wf280_out[WF280_R_SLEEP_UA]==3911&&
-       wf280_out[WF280_R_BT_DATA]==0xAC&&wf280_out[WF280_R_BT_DATA+5]==0xB1&&
-       wf280_out[WF280_R_COEFF]==0x1200&&wf280_out[WF280_R_COEFF+1]==0x1201&&
-       wf280_out[WF280_R_M1_COEFF]==0x1200&&wf280_out[WF280_R_M1_COEFF+1]==0x1201&&
-       wf280_out[WF280_R_BRIDGE]==0xB0&&wf280_out[WF280_R_BRIDGE+1]==0xAF&&
-       wf280_out[WF280_R_BRIDGE+2]==0xAE&&wf280_out[WF280_R_BRIDGE+3]==0xFF&&
-       wf280_out[WF280_R_TEMP]==0xB1&&wf280_out[WF280_R_TEMP+1]==0xB0&&
-       wf280_out[WF280_R_TEMP+2]==0xAF&&wf280_out[WF280_R_TEMP+3]==0xFF&&
-       wf280_out[WF280_R_COEFF_ALL]==0x1200&&wf280_out[WF280_R_COEFF_ALL+31]==0x121F&&
-       wf280_out[WF280_R_M1_COEFF_ALL]==0x1200&&wf280_out[WF280_R_M1_COEFF_ALL+31]==0x121F&&
+       wf280_out[WF280_R_RAW]==0xAC&&wf280_out[WF280_R_RAW+1]==0xAD&&
+       wf280_out[WF280_R_RAW+2]==0xAE&&wf280_out[WF280_R_RAW+3]==0xAF&&
+       wf280_out[WF280_R_RAW+4]==0xB0&&wf280_out[WF280_R_RAW+5]==0xB1&&
+       wf280_out[WF280_R_MEAS_ERR]==0&&
        power_on==1&&power_off==1&&voltage==0);
-/* 轨没起来就不去测芯片：直接报 WF280_STATUS_RAIL，且不产生 I2C 事务。 */
+/* 轨没起来就不去测芯片：轨压字保持 0，且不产生 I2C 事务。 */
 reset();rail_code=0;AllTestFor280(wf280_out,96);
-assert(wf280_out[WF280_R_STATUS]==WF280_STATUS_RAIL&&
-       (wf280_out[WF280_R_RAIL_FLAG]&WF280_RAIL_FLAG_UNDER)!=0&&
-       wf280_out[WF280_R_RAIL_MV]==0&&writes==0&&power_off==1&&voltage==0);
+assert(wf280_out[WF280_R_RAIL_MV]==0&&writes==0&&power_off==1&&voltage==0);
 rail_code=32760;
 /* All product paths preserve existing result offsets and power down. */
  reset();AllTestFor183(out,120);assert(last_power_on_mv==3300&&power_on==1&&power_off==1&&voltage==0);assert(out[2]==0xAA&&out[3]==8&&out[10]==42&&out[90]==1&&out[100]==1);assert(tx_pin==UART_TX_Pin&&rx_pin==UART_RX_Pin);

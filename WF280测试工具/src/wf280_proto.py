@@ -3,7 +3,7 @@
 
 覆盖固件里 WF280 相关的全部命令：
 
-    cmd[0] = 14                    异步整机测试（IsTaskDone 队列）  96 寄存器
+    cmd[0] = 0x14                  异步整机测试（IsTaskDone 队列）  10 寄存器
     {1, 0x211}                     同步回读实际轨压                 状态 + mV
     {11}                           OTP 双 bank 校验                 结果 + 失败路号
     {1, 0x208, meas, settle}       输出测试 3.3 V                   状态 + 6 字节
@@ -40,33 +40,21 @@ CMD_WF280_RAIL = 0x211        # {1, 0x211}
 CMD_GET_TASK_STATUS = 0x400
 CMD_GET_ALLTEST_DATA = 0x401
 CMD_WF280_OTP = 11            # {11}
-CMD_WF280_FULL_TEST = 14      # {14}
+CMD_WF280_FULL_TEST = 0x14    # {0x14}  触发 AllTestFor280
 
 # ---------------- 固件常量 ----------------
 
-RESULT_LENGTH = 96            # WF280_TEST_RESULT_LENGTH
+RESULT_LENGTH = 10            # WF280_TEST_RESULT_LENGTH
 OUTPUT_RESULT_LENGTH = 7      # WF280_OUTPUT_RESULT_LENGTH
 COEFF_MAX = 32                # WF280_COEFF_MAX
 
-# 整机测试结果帧偏移（0..23 与旧固件一致，24 起是扩展区）
-R_STATUS = 0
-R_RAIL_MV = 1
-R_RAIL_FLAG = 3
-R_WORK_UA = 4
-R_SLEEP_UA = 5
-R_WORK_CODE = 6
-R_SLEEP_CODE = 10
-R_BT_DATA = 14
-R_COEFF = 20
-R_M1_COEFF = 22
-R_BRIDGE = 24                 # 0xAD 电桥(压力) 24 位原始码
-R_TEMP = 28                   # 0xAE 温度 24 位原始码
-R_COEFF_ALL = 32              # 正常 bank 全 32 路
-R_M1_COEFF_ALL = 64           # M1 bank 全 32 路
-
-# 两个 bank 的头两路其实是芯片 ID 高低字（实测 29D8 0222 = 0x29D80222，
-# 与老工具的 id=29 D8 02 22 19 完全吻合），不是校准系数，显示时要分开。
-ID_COEFF_COUNT = 2
+# 整机测试结果帧偏移（精简版：0xAC 一次读 6 字节原始数据原样转存）
+R_RAIL_MV = 0                 # 实测轨压 mV，0 = 轨没起来
+R_WORK_UA = 1                 # 工作电流 uA
+R_SLEEP_UA = 2                # 休眠电流 uA
+R_RAW = 3                     # 0xAC 读出的 6 字节原始数据，1 字节 1 寄存器
+R_RAW_LEN = 6
+R_MEAS_ERR = 9                # 测量错误码（0=OK）
 RAIL_MIN_MV = 1500
 RAIL_TOLERANCE_PCT = 10
 TEST_RAIL_MV = 3300
@@ -79,10 +67,6 @@ SHORT_CURRENT_UA = 20000
 # 所以这里默认给宽一点，需要严格对标固件时用 --settle 传 20/200。
 SETTLE_3V3_MS = 300
 SETTLE_2V_MS = 400
-
-RAIL_FLAG_MEASURED = 0x01
-RAIL_FLAG_DEVIATED = 0x02
-RAIL_FLAG_UNDER = 0x04
 
 STATUS_TEXT = {
     0x00: "OK",
@@ -100,14 +84,6 @@ def status_text(code: int) -> str:
     return STATUS_TEXT.get(code, f"未定义状态 0x{code:04X}")
 
 
-def decode_u32(regs: list[int], offset: int) -> int:
-    """四个寄存器拼成 32 位小端原始码（固件是一个字节一个寄存器）。"""
-    value = 0
-    for i in range(4):
-        value |= (regs[offset + i] & 0xFF) << (8 * i)
-    return value
-
-
 # ---------------- 电流原始码换算 ----------------
 
 # 与固件 wf280.c 同一套常数
@@ -123,6 +99,24 @@ def signed24(raw: int) -> int:
     """
     value = raw & 0xFFFFFF
     return value - (1 << 24) if value & 0x800000 else value
+
+
+def signed20(raw: int) -> int:
+    """把 20 位补码解释成有符号整数（WF280 电桥/温度数据是 20 位）。"""
+    value = raw & 0xFFFFF
+    return value - (1 << 20) if value & 0x80000 else value
+
+
+def unpack_bt(regs: list[int], offset: int) -> tuple[int, int]:
+    """按手册 4.3 拆开 0xAC 的 6 字节读出（不含 Status，从 d1 起 5 字节）。
+
+    d1=BridgeDat[19:12]、d2=BridgeDat[11:4]、d3=BridgeDat[3:0]+TempDat[19:16]
+    共用字节、d4=TempDat[15:8]、d5=TempDat[7:0]。返回 (bridge20, temp20)。
+    """
+    d1, d2, d3, d4, d5 = (regs[offset + i] & 0xFF for i in range(5))
+    bridge = (d1 << 12) | (d2 << 4) | (d3 >> 4)
+    temp = ((d3 & 0x0F) << 16) | (d4 << 8) | d5
+    return bridge, temp
 
 
 def signed16(value: int) -> int:
@@ -186,7 +180,11 @@ class VersionResult(Result):
 
 @dataclass
 class FullTestResult(Result):
-    """AllTestFor280 的 32 个结果寄存器。"""
+    """AllTestFor280 的 10 个结果寄存器（精简版）。
+
+    字 3~8 是 0xAC 一次读出的 6 字节原始数据（含首字节芯片 Status），
+    按手册 4.3 原样转存；字 9 是固件侧测量错误码（0=OK）。
+    """
 
     regs: list[int] = field(default_factory=list)
 
@@ -194,96 +192,67 @@ class FullTestResult(Result):
         if len(self.regs) < RESULT_LENGTH:
             self.regs = list(self.regs) + [0] * (RESULT_LENGTH - len(self.regs))
 
-    status = property(lambda self: self.regs[0])
-    rail_mv = property(lambda self: self.regs[1])
-    rail_flag = property(lambda self: self.regs[3])
-    work_ua = property(lambda self: self.regs[4])
-    sleep_ua = property(lambda self: self.regs[5])
-    work_code = property(lambda self: decode_u32(self.regs, 6))
-    sleep_code = property(lambda self: decode_u32(self.regs, 10))
-    bt_data = property(lambda self: self.regs[14:20])
-    coeff = property(lambda self: self.regs[20:22])
-    m1_coeff = property(lambda self: self.regs[22:24])
-    bridge_code = property(lambda self: decode_u32(self.regs, R_BRIDGE))
-    temp_code = property(lambda self: decode_u32(self.regs, R_TEMP))
-    coeff_all = property(
-        lambda self: self.regs[R_COEFF_ALL:R_COEFF_ALL + COEFF_MAX])
-    m1_coeff_all = property(
-        lambda self: self.regs[R_M1_COEFF_ALL:R_M1_COEFF_ALL + COEFF_MAX])
-    chip_id = property(
-        lambda self: (self.coeff_all[0] << 16) | self.coeff_all[1])
+    rail_mv = property(lambda self: self.regs[R_RAIL_MV])
+    work_ua = property(lambda self: self.regs[R_WORK_UA])
+    sleep_ua = property(lambda self: self.regs[R_SLEEP_UA])
+    raw = property(lambda self: [self.regs[R_RAW + i] & 0xFF
+                                 for i in range(R_RAW_LEN)])
+    meas_err = property(lambda self: self.regs[R_MEAS_ERR])
+    chip_status = property(lambda self: self.raw[0])
+
+    @property
+    def bridge_code(self) -> int:
+        return unpack_bt(self.raw, 1)[0]
+
+    @property
+    def temp_code(self) -> int:
+        return unpack_bt(self.raw, 1)[1]
 
     @property
     def ok(self) -> bool:
-        return self.status == 0
-
-    @property
-    def rail_verdict(self) -> str:
-        flags = self.rail_flag
-        if flags & RAIL_FLAG_UNDER:
-            return f"轨未建立（{self.rail_mv} mV < {RAIL_MIN_MV} mV）"
-        if not flags & RAIL_FLAG_MEASURED:
-            return "ADC 未读到有效值"
-        if flags & RAIL_FLAG_DEVIATED:
-            return f"偏离设定值超过 {RAIL_TOLERANCE_PCT}%"
-        return "正常"
+        """轨压建立且测量错误码为 0。"""
+        return bool(self.rail_mv) and self.meas_err == 0
 
     @property
     def all_ok(self) -> bool:
-        """整机判定：总状态 OK 且轨压既没欠压也没超差。"""
-        return self.ok and not (self.rail_flag & (RAIL_FLAG_UNDER | RAIL_FLAG_DEVIATED))
+        return self.ok
 
-    def _current_rows(self, name: str, raw: int, fw_ua: int):
-        """电流行：直接显示按原始码算出的实际值。
-
-        固件返回的 uA 是 uint16 饱和值，小于 1 uA 会被截成 0，
-        所以这里统一用原始码重算，保留两位小数，不再标注“推算”。
-        """
-        calc = raw_to_ua(raw, self.rail_mv)
-        text = f"{calc:.2f} uA" if calc < 10 else f"{calc:.0f} uA"
-        verdict = "NG 疑似短路" if calc >= SHORT_CURRENT_UA else "OK"
+    def _bt_rows(self) -> list[tuple[str, str, str]]:
+        """电桥/温度行：错误码非 0 时数据不可信，只报错误。"""
+        if self.meas_err:
+            return [("电桥/温度原始数据", "—",
+                     f"NG {status_text(self.meas_err)}")]
+        d1, d2, d3, d4, d5 = self.raw[1:6]
         return [
-            (f"{name}电流", text, verdict),
-            (f"{name}电流原始码",
-             f"0x{raw:08X}（24 位有符号 {signed24(raw)}）", "—"),
+            ("0xAC 原始数据",
+             " ".join(f"{b:02X}" for b in self.raw), "—"),
+            ("芯片 Status", f"0x{self.chip_status:02X}", "—"),
+            ("电桥原始码（20 位）",
+             f"0x{self.bridge_code:05X}（有符号 {signed20(self.bridge_code)}）",
+             "—"),
+            ("温度原始码（20 位）",
+             f"0x{self.temp_code:05X}（有符号 {signed20(self.temp_code)}）",
+             "—"),
+            ("拆包字节", f"d1={d1:02X} d2={d2:02X} d3={d3:02X} "
+                         f"d4={d4:02X} d5={d5:02X}", "—"),
         ]
+
+    def _current_verdict(self, ua: int) -> str:
+        return "NG 疑似短路" if ua >= SHORT_CURRENT_UA else "OK"
 
     def rows(self):
         rows: list[tuple[str, str, str]] = [
-            ("总体状态", status_text(self.status), "OK" if self.ok else "NG"),
-            ("轨压（实测）", f"{self.rail_mv} mV", self.rail_verdict),
+            ("轨压（实测）",
+             f"{self.rail_mv} mV",
+             "OK" if self.rail_mv else "NG 轨未建立"),
+            ("工作电流", f"{self.work_ua} uA",
+             self._current_verdict(self.work_ua)),
+            ("休眠电流", f"{self.sleep_ua} uA",
+             self._current_verdict(self.sleep_ua)),
+            ("测量错误码", status_text(self.meas_err),
+             "OK" if self.meas_err == 0 else "NG"),
         ]
-        flags = []
-        if self.rail_flag & RAIL_FLAG_MEASURED:
-            flags.append("已测量")
-        if self.rail_flag & RAIL_FLAG_DEVIATED:
-            flags.append("超差")
-        if self.rail_flag & RAIL_FLAG_UNDER:
-            flags.append("欠压")
-        rows.append(("轨压标志", " / ".join(flags) if flags else "无",
-                     f"0x{self.rail_flag:02X}"))
-        rows.extend(self._current_rows("工作", self.work_code, self.work_ua))
-        rows.extend(self._current_rows("休眠", self.sleep_code, self.sleep_ua))
-        rows.append(("0xAC 测量数据",
-                     " ".join(f"{b:02X}" for b in self.bt_data), "—"))
-        rows.append(("压力/电桥原始码",
-                     f"0x{self.bridge_code:08X}（24 位有符号 "
-                     f"{signed24(self.bridge_code)}）", "—"))
-        rows.append(("温度原始码",
-                     f"0x{self.temp_code:08X}（24 位有符号 "
-                     f"{signed24(self.temp_code)}）", "—"))
-        rows.append(("芯片 ID（系数 0x00/0x01）",
-                     f"0x{self.chip_id:08X}（{self.chip_id}）", "—"))
-        for start in range(ID_COEFF_COUNT, COEFF_MAX, 8):
-            end = min(start + 7, COEFF_MAX - 1)
-            rows.append((f"正常系数 0x{start:02X}-0x{end:02X}",
-                         " ".join(f"{c:04X}"
-                                  for c in self.coeff_all[start:end + 1]), "—"))
-        for start in range(ID_COEFF_COUNT, COEFF_MAX, 8):
-            end = min(start + 7, COEFF_MAX - 1)
-            rows.append((f"M1 系数 0x{0x80 + start:02X}-0x{0x80 + end:02X}",
-                         " ".join(f"{c:04X}"
-                                  for c in self.m1_coeff_all[start:end + 1]), "—"))
+        rows.extend(self._bt_rows())
         return rows
 
 
@@ -472,7 +441,7 @@ class Wf280Tester:
         return FullTestResult(self._command([1, CMD_GET_ALLTEST_DATA], count))
 
     def start_full_test(self) -> int:
-        """触发 cmd[0]=14，固件回 out[0]=1 表示已入队。"""
+        """触发 cmd[0]=0x14，固件回 out[0]=1 表示已入队。"""
         return self._command([CMD_WF280_FULL_TEST], 1)[0]
 
     def run_full_test(self, timeout: float = 120.0, interval: float = 0.2,
@@ -496,6 +465,18 @@ class Wf280Tester:
                 raise TimeoutError(
                     f"整机测试超时（{timeout:.0f} s 未完成），检查 DUT 是否插好")
             time.sleep(interval)
+        return self.read_results()
+
+    def run_full_test_fixed(self, delay: float = 1.0) -> FullTestResult:
+        """产线流程：写 [14] → 等 delay 秒 → 写 [1,0x401] → 读 10 个寄存器。
+
+        用固定延时代替 0x400 轮询，但保留 0x401 取数：它是固件把结果
+        搬进输入寄存器的最终触发点，这样对任何固件版本都成立。
+        """
+        self.master.write_multiple_registers(
+            self.cmd_addr, [CMD_WF280_FULL_TEST])
+        if delay > 0:
+            time.sleep(delay)
         return self.read_results()
 
     # ---- ② 轨压 ----
