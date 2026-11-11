@@ -10,15 +10,18 @@
 #define WF280_M1_RESULT_LENGTH 5u
 #define WF280_COEFF_MAX 32u
 
-/* AllTestFor280 (cmd = 14) 的结果帧长度，占用 30000 起的 10 个输入寄存器。*/
-#define WF280_TEST_RESULT_LENGTH 12
+/* AllTestFor280 (cmd = 14) 的结果帧：76 个输入寄存器，首字固定为状态，
+   后面是真实数据，最后追加 M1/NOR 两 bank 的 32 路原始值。 */
+#define WF280_TEST_RESULT_LENGTH 76
 
-#define WF280_R_RAIL_MV    0
-#define WF280_R_WORK_RAW   1   /* 工作电流原始码，低 16 位在前 */
-#define WF280_R_SLEEP_RAW  3   /* 休眠电流原始码，低 16 位在前 */
-#define WF280_R_RAW        5   /* 0xAC 读出的 6 字节原始数据，1 字节 1 寄存器 */
+#define WF280_R_STATUS     0   /* 状态：0=OK，非 0=错误码 */
+#define WF280_R_RAIL_MV    1   /* 实测轨压 mV */
+#define WF280_R_WORK_RAW   2   /* 工作电流原始码，低 16 位在前 */
+#define WF280_R_SLEEP_RAW  4   /* 休眠电流原始码，低 16 位在前 */
+#define WF280_R_RAW        6   /* 0xAC 读出的 6 字节原始数据，1 字节 1 寄存器 */
 #define WF280_R_RAW_LEN    6
-#define WF280_R_MEAS_ERR  11   /* I2C测量错误码（0=OK） */
+#define WF280_R_M1        12   /* M1 bank 32 路系数原始值 */
+#define WF280_R_NOR       44   /* NOR bank 32 路系数原始值 */
 
 
 /* The WF280 adapter keeps the command/status convention used by the
