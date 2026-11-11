@@ -21,7 +21,7 @@
 
  static const uint16_t sys_adc_2200[] = { 0, TYPE1_GET_ADC };
  static const uint16_t sys_vdd_off_2200[] = { 1, TYPE1_SET_VDD, 0, 0 };
- static const uint16_t sys_vdd_on_2200[] = { 1, TYPE1_SET_VDD, (PRODUCT_TEST_VDD_MV & 0xFFu), (PRODUCT_TEST_VDD_MV >> 8) };
+ static const uint16_t sys_vdd_on_2200[] = { 1, TYPE1_SET_VDD, (PRODUCT_TEST_VDD_MV & 0xFF), (PRODUCT_TEST_VDD_MV >> 8) };
 
 void AllTestFor2200(uint16_t *out, uint16_t out_lens){
   if (out == NULL || out_lens < WF2200_RESULT_LENGTH) return;
@@ -71,7 +71,7 @@ void AllTestFor2200(uint16_t *out, uint16_t out_lens){
 
 
 void WF3050FtData(uint16_t *out, uint16_t out_lens) {
-  if (out == NULL || out_lens < 12u) return;
+  if (out == NULL || out_lens < 12) return;
   memset(out, 0, out_lens * sizeof(*out));
   uint16_t _out[16]={0};
   uint8_t i;

@@ -5,7 +5,7 @@
 #include "stm32g0xx_hal.h"
 #include "CmdHelper.h"
 
-#define WF183_RESULT_LENGTH 118u
+#define WF183_RESULT_LENGTH 118
 
 
 void AllTestFor183(uint16_t *out, uint16_t out_lens);

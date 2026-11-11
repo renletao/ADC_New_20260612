@@ -95,7 +95,7 @@ static uint8_t ADS1220_ReadDataFrame(uint32_t *value)
 	*value = ((uint32_t)rx[1] << 16) |
 	         ((uint32_t)rx[2] << 8) |
 	         (uint32_t)rx[3];
-	if (*value & 0x800000u) *value |= 0xff000000u;
+	if (*value & 0x800000) *value |= 0xff000000;
 	return 1;
 }
 

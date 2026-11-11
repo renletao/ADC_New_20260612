@@ -78,12 +78,12 @@ void pp_iic_stop(void)
 void pp_iic_sendbyte(uint8_t byte)
 {
     uint8_t i;
-    uint8_t last_high = byte & 1u;
+    uint8_t last_high = byte & 1;
     HAL_GPIO_WritePin(pp_scl_port, pp_scl_pin, GPIO_PIN_RESET);
-    pp_sda_out((byte & 0x80u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    pp_sda_out((byte & 0x80) ? GPIO_PIN_SET : GPIO_PIN_RESET);
     for (i = 0; i < 8; ++i) {
         HAL_GPIO_WritePin(pp_sda_port, pp_sda_pin,
-                         (byte & 0x80u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+                         (byte & 0x80) ? GPIO_PIN_SET : GPIO_PIN_RESET);
         byte <<= 1;
         delay_us(5);
         HAL_GPIO_WritePin(pp_scl_port, pp_scl_pin, GPIO_PIN_SET);

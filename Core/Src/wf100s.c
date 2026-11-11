@@ -9,7 +9,7 @@ static int ADC_Value_100s = 0;
 
 void AllTestFor100S(uint16_t *out, uint16_t out_lens){
   uint8_t saved_config;
-  uint16_t supply_on[] = {1, TYPE1_SET_VDD, WF100S_TEST_VDD_MV & 0xFFu, WF100S_TEST_VDD_MV >> 8};
+  uint16_t supply_on[] = {1, TYPE1_SET_VDD, WF100S_TEST_VDD_MV & 0xFF, WF100S_TEST_VDD_MV >> 8};
   uint16_t supply_off[] = {1, TYPE1_SET_VDD, 0, 0};
   uint16_t supply_result[1];
   if (out == NULL || out_lens < WF100S_RESULT_LENGTH) return;

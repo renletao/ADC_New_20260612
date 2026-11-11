@@ -14,7 +14,7 @@
 
 /* Single-master, external pull-ups; failure status remains 1. */
 #ifndef IIC_SCL_TIMEOUT_US
-#define IIC_SCL_TIMEOUT_US 1000u
+#define IIC_SCL_TIMEOUT_US 1000
 #endif
 
 typedef struct structI2CINFO 

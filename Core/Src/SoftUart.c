@@ -159,9 +159,9 @@ uint8_t Soft_Uart_Read_Bit(UartInfo *uart,uint32_t timout)
 	{
 		Tim = Wiat_For_Level(uart,GPIO_PIN_SET,timout);
 		if (HAL_GPIO_ReadPin(uart->Rx_Port, uart->Rx_Pin) != GPIO_PIN_SET) return 0;
-        if (!uart->BuadRate || Tim < uart->BuadRate / 2u || Tim > 9u * uart->BuadRate + uart->BuadRate / 2u) return 0;
+        if (!uart->BuadRate || Tim < uart->BuadRate / 2 || Tim > 9 * uart->BuadRate + uart->BuadRate / 2) return 0;
         Count = Tim/uart->BuadRate + ((Tim % uart->BuadRate)>=uart->BuadRate/2);
-        if (Count < 1u || Count > 9u) return 0;
+        if (Count < 1 || Count > 9) return 0;
 		data >>= Count - 1;
 		uart->Save_BuadRate = (float)Tim/Count;
 	}

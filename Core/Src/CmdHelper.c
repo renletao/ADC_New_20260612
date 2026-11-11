@@ -149,18 +149,18 @@ void ParseSystemCmd(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16
 						}
             break;
         case TYPE1_WF3050_FT_DATA:
-            if (out_lens < 12u) out[0] = CMD_ERROR_LENGTH;
+            if (out_lens < 12) out[0] = CMD_ERROR_LENGTH;
             else WF3050FtData(out, out_lens);
             break;
         case TYPE1_WF280_M1:
-            if (cmd[2] == 0u || cmd[2] > WF280_COEFF_MAX ||
-                out_lens < (uint16_t)(5u + cmd[2])) out[0] = CMD_ERROR_LENGTH;
+            if (cmd[2] == 0 || cmd[2] > WF280_COEFF_MAX ||
+                out_lens < (uint16_t)(5 + cmd[2])) out[0] = CMD_ERROR_LENGTH;
             else (void)WF280ReadM1((uint8_t)cmd[2], out, out_lens);
             break;
         case TYPE1_WF280_COEFF:
-            if (cmd[2] == 0u || cmd[2] > WF280_COEFF_MAX ||
-                out_lens < (uint16_t)(cmd[2] + 1u)) out[0] = CMD_ERROR_LENGTH;
-            else (void)WF280ReadCoefficients(0u, (uint8_t)cmd[2], out, out_lens);
+            if (cmd[2] == 0 || cmd[2] > WF280_COEFF_MAX ||
+                out_lens < (uint16_t)(cmd[2] + 1)) out[0] = CMD_ERROR_LENGTH;
+            else (void)WF280ReadCoefficients(0, (uint8_t)cmd[2], out, out_lens);
             break;
         case TYPE1_WF280_OUTDATA:
         case TYPE1_WF280_2V_OUTDATA:
@@ -189,11 +189,11 @@ void ParseSerialCmd(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16
     if (cmd_lens < 6) { out[0] = CMD_ERROR_LENGTH; return; }
     sendLens = cmd[2]; recvLens = cmd[4];
     if (sendLens > DATA_LENTH || recvLens > DATA_LENTH ||
-        cmd_lens < 6u + sendLens || out_lens < 2u + recvLens) {
+        cmd_lens < 6 + sendLens || out_lens < 2 + recvLens) {
         out[0] = CMD_ERROR_LENGTH; return;
     }
     memset(out, 0, out_lens * sizeof(*out));
-    for (i = 0; i < sendLens; ++i) SendBuff[i] = (uint8_t)cmd[i + 6u];
+    for (i = 0; i < sendLens; ++i) SendBuff[i] = (uint8_t)cmd[i + 6];
     UART_Init(&uart1, 9600, UART_TX_GPIO_Port, UART_TX_Pin, UART_RX_GPIO_Port, UART_RX_Pin);
     osDelay(10);
     Soft_Uart_Send(&uart1, SendBuff, sendLens, cmd[3]);
@@ -213,7 +213,7 @@ void ParseSerialCmd(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16
     }
     if (uart1.Save_BuadRate > 0) baud = (uint16_t)(1000000.0f / uart1.Save_BuadRate);
     out[0] = (uint8_t)(baud >> 8); out[1] = (uint8_t)baud;
-    for (i = 0; i < recvLens; ++i) out[i + 2u] = RecvBuff[i];
+    for (i = 0; i < recvLens; ++i) out[i + 2] = RecvBuff[i];
     UART_DeInit(&uart1);
 }
 
@@ -222,27 +222,27 @@ void ParseI2CCmd(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16_t 
     uint16_t sendLens, recvLens, i;
     uint8_t SendBuff[DATA_LENTH] = {0};
     uint8_t RecvBuff[DATA_LENTH] = {0};
-    uint8_t legacy_data[DATA_LENTH + 1u];
+    uint8_t legacy_data[DATA_LENTH + 1];
     if (!cmd || !out || !out_lens) return;
 
     /* Keep the original host protocol accepted by the WF test software:
        {3, channel, 0x11/0x22, address, reserved, length, payload...}.
        The current protocol below uses explicit send/receive lengths. */
-    if (cmd_lens >= 6u && (cmd[2] == 0x11u || cmd[2] == 0x22u)) {
+    if (cmd_lens >= 6 && (cmd[2] == 0x11 || cmd[2] == 0x22)) {
         uint16_t length = cmd[5];
         uint8_t err;
         if (length > DATA_LENTH ||
-            (cmd[2] == 0x22u && out_lens <= length) ||
-            (cmd[2] == 0x11u && cmd_lens < 6u + length)) {
+            (cmd[2] == 0x22 && out_lens <= length) ||
+            (cmd[2] == 0x11 && cmd_lens < 6 + length)) {
             out[0] = CMD_ERROR_LENGTH;
             return;
         }
         IIC_Init(&i2c1, I2C_SDA_GPIO_Port, I2C_SDA_Pin,
                  I2C_SCL_GPIO_Port, I2C_SCL_Pin);
-        if (cmd[2] == 0x11u) {
-            legacy_data[0] = (uint8_t)(cmd[3] & 0xFEu);
-            for (i = 0; i < length; ++i) legacy_data[i + 1u] = (uint8_t)cmd[i + 6u];
-            err = I2C_WriteNByte(&i2c1, legacy_data, length + 1u);
+        if (cmd[2] == 0x11) {
+            legacy_data[0] = (uint8_t)(cmd[3] & 0xFE);
+            for (i = 0; i < length; ++i) legacy_data[i + 1] = (uint8_t)cmd[i + 6];
+            err = I2C_WriteNByte(&i2c1, legacy_data, length + 1);
             out[0] = err;
         } else {
             err = I2C_ReadNByte(&i2c1, (uint8_t)cmd[3], legacy_data, length);
@@ -252,20 +252,20 @@ void ParseI2CCmd(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16_t 
         IIC_DeInit(&i2c1);
         return;
     }
-    if (cmd_lens < 7u) { out[0] = CMD_ERROR_LENGTH; return; }
+    if (cmd_lens < 7) { out[0] = CMD_ERROR_LENGTH; return; }
     sendLens = cmd[2]; recvLens = cmd[4];
     if (!sendLens || sendLens > DATA_LENTH || recvLens > DATA_LENTH ||
-        cmd_lens < 6u + sendLens || out_lens < 2u + recvLens) {
+        cmd_lens < 6 + sendLens || out_lens < 2 + recvLens) {
         out[0] = CMD_ERROR_LENGTH; return;
     }
     memset(out, 0, out_lens * sizeof(*out));
-    for (i = 0; i < sendLens; ++i) SendBuff[i] = (uint8_t)cmd[i + 6u];
+    for (i = 0; i < sendLens; ++i) SendBuff[i] = (uint8_t)cmd[i + 6];
     IIC_Init(&i2c1, I2C_SDA_GPIO_Port, I2C_SDA_Pin, I2C_SCL_GPIO_Port, I2C_SCL_Pin);
     osDelay(10);
     out[0] = I2C_WriteNByte(&i2c1, SendBuff, sendLens);
     if (!out[0] && recvLens) {
         out[1] = I2C_ReadNByte(&i2c1, SendBuff[0], RecvBuff, recvLens);
-        for (i = 0; i < recvLens; ++i) out[i + 2u] = RecvBuff[i];
+        for (i = 0; i < recvLens; ++i) out[i + 2] = RecvBuff[i];
     }
     IIC_DeInit(&i2c1);
 }
@@ -275,7 +275,7 @@ void ParseOwiCmd(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16_t 
 	uint8_t RecvBuff[DATA_LENTH] = {0};
 	(void)cmd;
 	(void)cmd_lens;
-    if (!out || out_lens < 4u) return;
+    if (!out || out_lens < 4) return;
 	OWI_Device.cycle = 0;
 	OWI(RecvBuff,200);
 	osDelay(100);
@@ -294,7 +294,7 @@ void Parse(const uint16_t *cmd, uint8_t cmd_lens, uint16_t *out, uint16_t out_le
     if (!cmd || !cmd_lens || !out || !out_lens) return;
     cmdType = cmd[0];
     /* Only status/results may be queried while the product task owns the peripherals. */
-    if (IsTaskDone && !(cmdType == 1 && cmd_lens >= 2u &&
+    if (IsTaskDone && !(cmdType == 1 && cmd_lens >= 2 &&
         (cmd[1] == TYPE1_GET_TASK_STATUS || cmd[1] == TYPE1_GET_ALLTEST_DATA))) {
         out[0] = CMD_ERROR_BUSY; return;
     }

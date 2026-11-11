@@ -6,7 +6,7 @@
 #include "stm32g0xx_hal.h"
 #include "CmdHelper.h"
 
-#define WF100S_RESULT_LENGTH 16u
+#define WF100S_RESULT_LENGTH 16
 
 void AllTestFor100S(uint16_t *out, uint16_t out_lens);
 

@@ -8,7 +8,7 @@
 
 static const uint16_t sys_adc_183[] = { 0, TYPE1_GET_ADC };
 static const uint16_t sys_vdd_off_183[] = { 1, TYPE1_SET_VDD, 0, 0 };
-static const uint16_t sys_vdd_on_183[] = { 1, TYPE1_SET_VDD, (PRODUCT_TEST_VDD_MV & 0xFFu), (PRODUCT_TEST_VDD_MV >> 8) };
+static const uint16_t sys_vdd_on_183[] = { 1, TYPE1_SET_VDD, (PRODUCT_TEST_VDD_MV & 0xFF), (PRODUCT_TEST_VDD_MV >> 8) };
 static int32_t ADC_Value_183 = 0;
 
 /************WF183DE****************/

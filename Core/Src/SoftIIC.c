@@ -155,7 +155,7 @@ void iic_sendbyte(I2CInfo *info, uint8_t byte)
     HAL_GPIO_WritePin(info->portScl, info->pinScl, GPIO_PIN_RESET);
     for (bit = 0; bit < 8; ++bit) {
         HAL_GPIO_WritePin(info->portSda, info->pinSda,
-                         (byte & 0x80u) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+                         (byte & 0x80) ? GPIO_PIN_SET : GPIO_PIN_RESET);
         byte <<= 1;
         delay_us(10);
         if (scl_high(info)) return;
@@ -197,7 +197,7 @@ uint8_t I2C_ReadNByte(I2CInfo *info, uint8_t addr, uint8_t *data, uint32_t lengt
     err = iic_wait_ack(info);
     if (!err) {
         for (i = 0; i < length; ++i) {
-            data[i] = iic_readbyte(info, i + 1u < length);
+            data[i] = iic_readbyte(info, i + 1 < length);
             if (info->error) break;
         }
     }

@@ -43,7 +43,7 @@ extern "C" {
 
 /* DRDY is active low. The timeout covers the slowest configured
    conversion rate while still allowing a disconnected ADC to recover. */
-#define ADS1220_DRDY_TIMEOUT_US 300000u
+#define ADS1220_DRDY_TIMEOUT_US 300000
 
 typedef struct
 {

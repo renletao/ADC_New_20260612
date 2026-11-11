@@ -3,7 +3,7 @@
 #include <string.h>
 #include "CmdHelper.h"
 
-#define WF2200_I2C_ADDRESS 0xDAu
+#define WF2200_I2C_ADDRESS 0xDA
 
 uint8_t ProductI2CTransfer(const uint16_t *cmd, uint8_t cmd_len,
                           uint16_t *out, uint16_t out_len)
@@ -12,15 +12,15 @@ uint8_t ProductI2CTransfer(const uint16_t *cmd, uint8_t cmd_len,
     uint8_t read_data[64] = {0};
     uint8_t err = 0;
     uint16_t i, send_len, read_len;
-    if (!cmd || cmd_len < 7u || !out || !out_len) return CMD_ERROR_LENGTH;
+    if (!cmd || cmd_len < 7 || !out || !out_len) return CMD_ERROR_LENGTH;
     send_len = cmd[2]; read_len = cmd[4];
-    if (!send_len || send_len > 64u || read_len > 64u ||
-        cmd_len < 6u + send_len || read_len >= out_len) return CMD_ERROR_LENGTH;
+    if (!send_len || send_len > 64 || read_len > 64 ||
+        cmd_len < 6 + send_len || read_len >= out_len) return CMD_ERROR_LENGTH;
     memset(out, 0, out_len * sizeof(*out));
-    for (i = 0; i < send_len; ++i) send_data[i] = (uint8_t)cmd[i + 6u];
+    for (i = 0; i < send_len; ++i) send_data[i] = (uint8_t)cmd[i + 6];
     IIC_Init(&i2c1, I2C_SDA_GPIO_Port, I2C_SDA_Pin, I2C_SCL_GPIO_Port, I2C_SCL_Pin);
     /* A product read follows its separate register-select write. */
-    if (send_len > 1u || !read_len) err = I2C_WriteNByte(&i2c1, send_data, send_len);
+    if (send_len > 1 || !read_len) err = I2C_WriteNByte(&i2c1, send_data, send_len);
     if (!err && read_len) err = I2C_ReadNByte(&i2c1, send_data[0], read_data, read_len);
     for (i = 0; i < read_len; ++i) out[i] = read_data[i];
     out[read_len] = err;
@@ -74,7 +74,7 @@ static uint8_t pp_product_read(uint8_t *data, uint8_t len)
     pp_iic_start();
     pp_iic_sendbyte(WF2200_I2C_ADDRESS | IIC_READ);
     if (pp_iic_wait_ack()) { pp_iic_stop(); return 1; }
-    for (i = 0; i < len; ++i) data[i] = pp_iic_readbyte(i + 1u < len);
+    for (i = 0; i < len; ++i) data[i] = pp_iic_readbyte(i + 1 < len);
     pp_iic_stop();
     return 0;
 }

@@ -4,7 +4,7 @@
 #include "stm32g0xx_hal.h"
 #include "CmdHelper.h"
 
-#define WF2200_RESULT_LENGTH 77u
+#define WF2200_RESULT_LENGTH 77
 
 void AllTestFor2200(uint16_t *out, uint16_t out_lens);
 void WF3050FtData(uint16_t *out, uint16_t out_lens);

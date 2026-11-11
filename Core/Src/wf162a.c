@@ -15,14 +15,14 @@
  * changed with the board schematic without touching the result protocol.
  */
 /* AIN1-AIN0, gain 1, PGA bypass; the current-sense polarity is positive. */
-//#define WF162A_CURRENT_CONFIG 0x61u
-#define WF162A_CURRENT_CONFIG 0x01u
-#define WF162A_VOUT_PLUS_CONFIG 0xA1u
-#define WF162A_VOUT_MINUS_CONFIG 0xB1u
-#define WF162A_DIFF_CONFIG 0x51u
-#define WF162A_SETTLE_MS 150u
-#define WF162A_SAMPLE_DELAY_MS 20u
-#define WF162A_SAMPLE_ATTEMPTS 10u
+//#define WF162A_CURRENT_CONFIG 0x61
+#define WF162A_CURRENT_CONFIG 0x01
+#define WF162A_VOUT_PLUS_CONFIG 0xA1
+#define WF162A_VOUT_MINUS_CONFIG 0xB1
+#define WF162A_DIFF_CONFIG 0x51
+#define WF162A_SETTLE_MS 150
+#define WF162A_SAMPLE_DELAY_MS 20
+#define WF162A_SAMPLE_ATTEMPTS 10
 
 /* Configuration register 2, bits 7:6 VREF[1:0] (datasheet table for
    configuration register 2).  Only the analog supply keeps the ADC full
@@ -30,40 +30,40 @@
    cannot represent the 2.5 V half bridge of a 5 V product, it clips at
    0x7FFFFF instead.  The constants stay local to this module on purpose so
    the other product tests keep their existing ADS1220 configuration. */
-#define WF162A_VREF_MASK 0xC0u
-#define WF162A_VREF_INTERNAL_2048 0x00u /* 00: internal 2.048 V          */
-#define WF162A_VREF_AVDD_AVSS 0xC0u     /* 11: analog supply AVDD - AVSS */
+#define WF162A_VREF_MASK 0xC0
+#define WF162A_VREF_INTERNAL_2048 0x00 /* 00: internal 2.048 V          */
+#define WF162A_VREF_AVDD_AVSS 0xC0     /* 11: analog supply AVDD - AVSS */
 
 /* Every conversion is taken against the ADC analog supply, so the full scale
    always follows the switched DUT rail: the 2.5 V half bridge of a 5 V
    product stays at 50 % FS instead of saturating a 2.048 V reference.  The
    task-9 host converts each word with a fixed 3.3 V ratio, therefore every
    word is rescaled from the reference that was really in use to 3300 mV. */
-#define WF162A_HOST_REFERENCE_MV 3300u
+#define WF162A_HOST_REFERENCE_MV 3300
 
 /* (AVDD - AVSS) / 4 measured against the internal 2.048 V reference.  The
    conversion code of that monitor channel equals AVDD in mV times 1024, so
    the reference actually in use can be measured instead of assumed.  This
    covers boards that power the ADS1220 from the switched DUT rail and boards
    that keep it on a fixed 3.3 V rail. */
-#define WF162A_SUPPLY_MONITOR_CONFIG 0xD1u
-#define WF162A_SUPPLY_CODE_PER_MV 1024u
-#define WF162A_SUPPLY_MIN_MV 1800u
-#define WF162A_SUPPLY_MAX_MV 5500u
+#define WF162A_SUPPLY_MONITOR_CONFIG 0xD1
+#define WF162A_SUPPLY_CODE_PER_MV 1024
+#define WF162A_SUPPLY_MIN_MV 1800
+#define WF162A_SUPPLY_MAX_MV 5500
 
 /* Positive over-range is reported as 0x7FFFFF and negative over-range as
    0x800000, so a word within a few counts of full scale is a clipped sample
    and no longer a measurement. */
-#define WF162A_FULL_SCALE_CODE 0x7FFFFFu
+#define WF162A_FULL_SCALE_CODE 0x7FFFFF
 #define WF162A_SATURATION_MARGIN 16
 
 /* WF162A defaults to 5 V.  0x201 may select 3.3 V or 5 V and the
    selection remains active until the host changes it. */
-static uint16_t wf162a_configured_supply_mv = 3300u;
+static uint16_t wf162a_configured_supply_mv = 3300;
 
 void WF162A_SetConfiguredSupply(uint16_t supply_mv)
 {
-    if (supply_mv == 3300u || supply_mv == 5000u)
+    if (supply_mv == 3300 || supply_mv == 5000)
         wf162a_configured_supply_mv = supply_mv;
 }
 
@@ -86,8 +86,8 @@ static void wf162a_apply_input(uint8_t config, uint8_t vref_bits)
     ADS1220.config[0] = config;
     ADS1220.config[2] = (uint8_t)((ADS1220.config[2] & (uint8_t)~WF162A_VREF_MASK) |
                                   vref_bits);
-    ADS1220_WriteRegister(0u, 1u, &ADS1220.config[0]);
-    ADS1220_WriteRegister(2u, 1u, &ADS1220.config[2]);
+    ADS1220_WriteRegister(0, 1, &ADS1220.config[0]);
+    ADS1220_WriteRegister(2, 1, &ADS1220.config[2]);
 }
 
 static uint8_t wf162a_read_code(int32_t *value)
@@ -98,14 +98,14 @@ static uint8_t wf162a_read_code(int32_t *value)
     /* A disconnected ADC or conversion timeout is retried, while a valid
        zero code is accepted because ADS1220_ReadValue returns a separate
        success flag. */
-    for (attempt = 0u; attempt < WF162A_SAMPLE_ATTEMPTS; ++attempt) {
+    for (attempt = 0; attempt < WF162A_SAMPLE_ATTEMPTS; ++attempt) {
         if (ADS1220_ReadValue(&ADS1220, &raw)) {
             *value = (int32_t)raw;
-            return 1u;
+            return 1;
         }
     }
     *value = 0;
-    return 0u;
+    return 0;
 }
 
 static int32_t wf162a_median3(int32_t a, int32_t b, int32_t c)
@@ -141,10 +141,10 @@ static uint8_t wf162a_sample(uint8_t config, uint8_t vref_bits, int32_t *value)
         !wf162a_read_code(&sample_b) ||
         !wf162a_read_code(&sample_c)) {
         *value = 0;
-        return 0u;
+        return 0;
     }
     *value = wf162a_median3(sample_a, sample_b, sample_c);
-    return 1u;
+    return 1;
 }
 
 /* Rescale a word taken against reference_mv to the reference the host
@@ -153,7 +153,7 @@ static uint32_t wf162a_rescale(uint32_t raw, uint16_t reference_mv)
 {
     int64_t value;
 
-    if (reference_mv == 0u) return raw;
+    if (reference_mv == 0) return raw;
     value = (int64_t)(int32_t)raw * (int64_t)reference_mv /
             (int64_t)WF162A_HOST_REFERENCE_MV;
     if (value > (int64_t)INT32_MAX) value = (int64_t)INT32_MAX;
@@ -167,7 +167,7 @@ static uint8_t wf162a_saturated(uint32_t raw)
     int32_t magnitude = (code < 0) ? -code : code;
 
     return (magnitude >= ((int32_t)WF162A_FULL_SCALE_CODE - WF162A_SATURATION_MARGIN)) ?
-           1u : 0u;
+           1 : 0;
 }
 
 /* Measure the ADC analog supply.  The requested DUT supply is retained only
@@ -187,7 +187,7 @@ static uint16_t wf162a_measure_reference_mv(uint16_t fallback_mv, uint16_t *stat
         *status |= WF162A_STATUS_REFERENCE_FAILED;
         return fallback_mv;
     }
-    mv = ((uint32_t)code + (WF162A_SUPPLY_CODE_PER_MV / 2u)) /
+    mv = ((uint32_t)code + (WF162A_SUPPLY_CODE_PER_MV / 2)) /
          WF162A_SUPPLY_CODE_PER_MV;
     if (mv < WF162A_SUPPLY_MIN_MV || mv > WF162A_SUPPLY_MAX_MV) {
         *status |= WF162A_STATUS_REFERENCE_FAILED;
@@ -204,7 +204,7 @@ static void wf162a_measure_channel(uint16_t *dst, uint8_t config, uint16_t refer
 
     if (!wf162a_sample(config, WF162A_VREF_AVDD_AVSS, &raw)) {
         *status |= WF162A_STATUS_ADC_TIMEOUT;
-        wf162a_store_raw(dst, 0u);
+        wf162a_store_raw(dst, 0);
         return;
     }
     if (wf162a_saturated((uint32_t)raw)) *status |= saturation_flag;
@@ -213,7 +213,7 @@ static void wf162a_measure_channel(uint16_t *dst, uint8_t config, uint16_t refer
 
 static void wf162a_run_supply(uint16_t supply_mv, uint16_t *result)
 {
-    uint16_t status = 0u;
+    uint16_t status = 0;
     uint16_t reference_mv;
 
     /* Keep the selected rail valid even when cmd=9 is sent without a
@@ -262,14 +262,14 @@ void AllTestFor162A(uint16_t *out, uint16_t out_lens)
        32-register layout. */
     selected_result = &out[0];
     wf162a_run_supply(wf162a_configured_supply_mv, selected_result);
-    if (wf162a_configured_supply_mv == 5000u) {
+    if (wf162a_configured_supply_mv == 5000) {
         memcpy(&out[WF162A_SUPPLY_RESULT_LENGTH], selected_result,
                WF162A_SUPPLY_RESULT_LENGTH * sizeof(*selected_result));
     }
     /* Register 2 is rewritten during the round, so all four registers are
        restored together instead of only the mux byte. */
     memcpy(ADS1220.config, saved_config, sizeof(saved_config));
-    ADS1220_WriteRegister(0u, 4u, &ADS1220.config[0]);
+    ADS1220_WriteRegister(0, 4, &ADS1220.config[0]);
     /* Keep VDD on for repeated task-9 measurements.  The host can explicitly
        switch it off with {1, 0x201, 0, 0}; other product tests keep their
        existing power lifecycle. */
