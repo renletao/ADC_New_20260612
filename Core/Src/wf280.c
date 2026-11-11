@@ -500,15 +500,15 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
     //    先 0xBA 复位（等 10ms）；复位后再给 50ms 启动时间，然后逐路读。
     //    每路 3 字节：[0] 状态/回显，[1..2] 16 位系数（大端），间隔 1ms。
     wf280_open(&bus); // 开启i2c
-    status = wf280_set_cmd(&bus, WF280_CMD_RESET, NULL, 0u, 0u, 10u);
+    status = wf280_set_cmd(&bus, WF280_CMD_RESET, NULL, 0, 0, 10);
     if (status == WF280_STATUS_OK) {
-        osDelay(50u);
-        for (k = 0u; k < WF280_COEFF_MAX; ++k) {
-            status = wf280_get_chip_data(&bus, (uint8_t)(0x80u + k),
-                                         coeff_data, 3u);
+        osDelay(50);
+        for (k = 0; k < WF280_COEFF_MAX; ++k) {
+            status = wf280_get_chip_data(&bus, (uint8_t)(0x80 + k),
+                                         coeff_data, 3);
             if (status != WF280_STATUS_OK) break;
             m1_coeff[k] = ((uint16_t)coeff_data[1] << 8) | coeff_data[2];
-            osDelay(1u);
+            osDelay(1);
         }
     }
     wf280_close(&bus);
@@ -520,7 +520,8 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
         return;
     }
 
-
+		MCP4725_WriteData_Voltage(0);
+		osDelay(1);
     // 3、切 3.3V。
     //    NOR bank（0x00~0x1F）在正常 3.3V 模式下访问，等 100ms 稳定。
     MCP4725_WriteData_Voltage(WF280_SUPPLY_3V3_MV);
@@ -532,19 +533,19 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
     //    每路 3 字节，取 [1..2] 当 16 位系数；先存 nor_coeff，再和 m1_coeff 比。
     //    某一路不同就记下路号并退出循环，每路间隔 5ms。
     wf280_open(&bus);
-    status = wf280_set_cmd(&bus, WF280_CMD_RESET, NULL, 0u, 0u, 10u);
+    status = wf280_set_cmd(&bus, WF280_CMD_RESET, NULL, 0, 0, 10);
     if (status == WF280_STATUS_OK) {
-        osDelay(50u);
-        for (k = 0u; k < WF280_COEFF_MAX; ++k) {
-            status = wf280_get_chip_data(&bus, k, coeff_data, 3u);
+        osDelay(50);
+        for (k = 0; k < WF280_COEFF_MAX; ++k) {
+            status = wf280_get_chip_data(&bus, k, coeff_data, 3);
             if (status != WF280_STATUS_OK) break;
             nor = ((uint16_t)coeff_data[1] << 8) | coeff_data[2];
             nor_coeff[k] = nor;                     // 保存 NOR 原始值
             if (nor != m1_coeff[k]) {               // 有一位不同
-                nor_mismatch = (uint8_t)(k + 1u);   // 记录第几路，1~32
+                nor_mismatch = (uint8_t)(k + 1);   // 记录第几路，1~32
                 break;
             }
-            osDelay(5u);
+            osDelay(5);
         }
     }
     wf280_close(&bus);
@@ -578,7 +579,7 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
     //     工作电流必须在测量进行中抓，等测量结束芯片就进低功耗了。
     //     参数按大端拆成两个字节；测量约 100ms，然后轮询 NOR 空闲。
     wf280_open(&bus);
-    status = wf280_set_cmd(&bus, WF280_CMD_RESET, NULL, 0u, 0u, 10u);
+    status = wf280_set_cmd(&bus, WF280_CMD_RESET, NULL, 0, 0, 10);
     if (status == WF280_STATUS_OK) {
         osDelay(50);
         params[0] = (uint8_t)(WF280_TEST_MEASUREMENT >> 8);
@@ -587,7 +588,7 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
     }
     if (status == WF280_STATUS_OK) {
         work_code = wf280_read_current();
-        out[WF280_R_WORK_RAW]     = (uint16_t)(work_code & 0xFFFFu);        // 结果帧 [2..3] 工作电流原始码
+        out[WF280_R_WORK_RAW]     = (uint16_t)(work_code & 0xFFFF);        // 结果帧 [2..3] 工作电流原始码
         out[WF280_R_WORK_RAW + 1] = (uint16_t)(work_code >> 16);
 
         osDelay(WF280_TEST_MEASURE_MS);
