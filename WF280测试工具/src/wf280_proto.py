@@ -3,7 +3,7 @@
 
 覆盖固件里 WF280 相关的全部命令：
 
-    cmd[0] = 0x14                  异步整套测试（IsTaskDone 队列）  77 寄存器
+    cmd[0] = 0x14                  异步整套测试（IsTaskDone 队列）  89 寄存器
     {1, 0x211}                     同步回读实际轨压                 状态 + mV
     {11}                           OTP 双 bank 校验                 结果 + 失败路号
     {1, 0x208, meas, settle}       输出测试 3.3 V                   状态 + 6 字节
@@ -19,9 +19,11 @@
     [2]        3.3 V 档实测轨压 mV（切 3.3 V 稳定后、读 NOR 之前测）
     [3..4]     工作电流原始码，低 16 位在前
     [5..6]     休眠电流原始码，低 16 位在前
-    [7..12]    0xAC 读出的 6 字节（Status + 电桥 20 位 + 温度 20 位）
-    [13..44]   M1 bank 32 路系数原始值
-    [45..76]   NOR bank 32 路系数原始值
+    [7..12]    第 1 次 0xAC 的 6 字节（Status + 电桥 20 位 + 温度 20 位）
+    [13..18]   第 2 次 0xAC 的 6 字节
+    [19..24]   第 3 次 0xAC 的 6 字节
+    [25..56]   M1 bank 32 路系数原始值
+    [57..88]   NOR bank 32 路系数原始值
 
 固件只回传电流的**原始码**，uA 值由本工具按同一套常数换算，
 所以界面上的“解析电流”才是真实电流。
@@ -56,7 +58,7 @@ CMD_WF280_FULL_TEST = 0x14    # {0x14}  触发 AllTestFor280
 
 # ---------------- 固件常量 ----------------
 
-RESULT_LENGTH = 77            # WF280_TEST_RESULT_LENGTH
+RESULT_LENGTH = 89            # WF280_TEST_RESULT_LENGTH
 OUTPUT_RESULT_LENGTH = 7      # WF280_OUTPUT_RESULT_LENGTH
 COEFF_MAX = 32                # WF280_COEFF_MAX
 
@@ -66,10 +68,11 @@ R_RAIL_1V8_MV = 1             # 1.8 V 档实测轨压 mV
 R_RAIL_MV = 2                 # 3.3 V 档实测轨压 mV
 R_WORK_RAW = 3                # 工作电流原始码，低 16 位在前
 R_SLEEP_RAW = 5               # 休眠电流原始码，低 16 位在前
-R_RAW = 7                     # 0xAC 读出的 6 字节原始数据，1 字节 1 寄存器
+R_RAW = 7                     # 3 次 0xAC 原始数据连续放：每次 6 字节
 R_RAW_LEN = 6
-R_M1 = 13                     # M1 bank 32 路系数原始值
-R_NOR = 45                    # NOR bank 32 路系数原始值
+RAW_SAMPLES = 3               # 0xAC 连测次数
+R_M1 = 25                     # M1 bank 32 路系数原始值
+R_NOR = 57                    # NOR bank 32 路系数原始值
 
 RAIL_MIN_MV = 1500
 RAIL_TOLERANCE_PCT = 10
@@ -207,11 +210,11 @@ class VersionResult(Result):
 
 @dataclass
 class FullTestResult(Result):
-    """AllTestFor280 的 77 个结果寄存器。
+    """AllTestFor280 的 89 个结果寄存器。
 
     首字是状态，成功时后面依次是 1.8 V / 3.3 V 两档实测轨压、工作/休眠电流原始码、
-    0xAC 的 6 字节原始数据，最后是 M1 / NOR 两个 bank 各 32 路原始值。
-    失败时固件只写首字错误码，[1..76] 全 0。
+    0xAC 连测 3 次的 18 字节原始数据（[7..24]），最后是 M1 / NOR 两个 bank 各 32 路原始值。
+    失败时固件只写首字错误码，[1..88] 全 0。
     """
 
     regs: list[int] = field(default_factory=list)
@@ -231,8 +234,17 @@ class FullTestResult(Result):
                          | (self.regs[R_SLEEP_RAW + 1] << 16))
     raw = property(lambda self: [self.regs[R_RAW + i] & 0xFF
                                  for i in range(R_RAW_LEN)])
+    raw2 = property(lambda self: [self.regs[R_RAW + R_RAW_LEN + i] & 0xFF
+                                  for i in range(R_RAW_LEN)])
+    raw3 = property(lambda self: [self.regs[R_RAW + 2 * R_RAW_LEN + i] & 0xFF
+                                  for i in range(R_RAW_LEN)])
     m1 = property(lambda self: list(self.regs[R_M1:R_M1 + COEFF_MAX]))
     nor = property(lambda self: list(self.regs[R_NOR:R_NOR + COEFF_MAX]))
+
+    @property
+    def samples(self) -> list[list[int]]:
+        """3 次 0xAC 的 6 字节原始数据，按测量顺序。"""
+        return [self.raw, self.raw2, self.raw3]
 
     @property
     def status_ok(self) -> bool:
@@ -331,7 +343,7 @@ class FullTestResult(Result):
             ("状态字 [0]", f"0x{self.status:04X}（{status_text(self.status)}）",
              "NG"),
             ("失败说明",
-             "固件在失败点立即返回，[1..76] 全 0，轨压 / 电流 / 原始数据 / "
+             "固件在失败点立即返回，[1..88] 全 0，轨压 / 电流 / 原始数据 / "
              "系数都没有测", "—"),
             ("建议",
              "先重测一次；仍失败就用「读 M1」「读系数」逐路比对定位",
@@ -341,16 +353,16 @@ class FullTestResult(Result):
     def _bt_rows(self) -> list[tuple[str, str, str]]:
         if not self.status_ok:
             return []
-        return [
-            ("0xAC 原始数据（6 字节）",
-             " ".join(f"{b:02X}" for b in self.raw), "—"),
-            ("电桥原始码（20 位）",
-             f"0x{self.bridge_code:05X}（有符号 {signed20(self.bridge_code)}）",
-             "—"),
-            ("温度原始码（20 位）",
-             f"0x{self.temp_code:05X}（有符号 {signed20(self.temp_code)}）",
-             "—"),
-        ]
+        rows = []
+        for index, sample in enumerate(self.samples, 1):
+            bridge, temp = unpack_bt(sample, 1)
+            rows.append((f"0xAC 第 {index} 次（6 字节）",
+                         " ".join(f"{b:02X}" for b in sample), "—"))
+            rows.append((f"电桥原始码（第 {index} 次，20 位）",
+                         f"0x{bridge:05X}（有符号 {signed20(bridge)}）", "—"))
+            rows.append((f"温度原始码（第 {index} 次，20 位）",
+                         f"0x{temp:05X}（有符号 {signed20(temp)}）", "—"))
+        return rows
 
     def _coeff_row(self) -> tuple[str, str, str]:
         if not self.coeff_available:
@@ -583,7 +595,7 @@ class Wf280Tester:
         """触发整套测试并等它跑完。
 
         固件自己会切 1.8 V 读 M1、切 3.3 V 读 NOR 并逐路比对，
-        全部一致后再测轨压/工作电流/0xAC/休眠电流，实测约 2~3 秒。
+        全部一致后再测轨压/工作电流/0xAC（连测 3 次）/休眠电流，实测约 2~3 秒。
         """
         ack = self.start_full_test()
         if ack != 1:
@@ -602,7 +614,7 @@ class Wf280Tester:
         return self.read_results()
 
     def run_full_test_fixed(self, delay: float = 3.0) -> FullTestResult:
-        """产线流程：写 [14] → 等 delay 秒 → 写 [1,0x401] → 读 77 个寄存器。
+        """产线流程：写 [14] → 等 delay 秒 → 写 [1,0x401] → 读 89 个寄存器。
 
         不轮询 0x400，只靠固定延时；如果到点还没跑完，0x401 会回 0xF1，
         这里再补一次轮询，避免把“还在跑”误当成结果。

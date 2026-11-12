@@ -3,9 +3,9 @@
 
 逐条验证 WF280 的全部命令：
     Modbus 帧的 CRC / 功能码 / 寄存器地址（40000 写、30000 读）
-    cmd 0x14 的异步队列流程（触发 → 轮询 IsTaskDone → 取 77 个寄存器）
+    cmd 0x14 的异步队列流程（触发 → 轮询 IsTaskDone → 取 89 个寄存器）
     新结果帧的解码：状态、1.8 V / 3.3 V 两档实测轨压、工作/休眠电流原始码与解析值、
-    0xAC 的 6 字节原始数据、M1 / NOR 两个 bank 的 32 路系数
+    0xAC 连测 3 次的 6 字节原始数据、M1 / NOR 两个 bank 的 32 路系数
     0x211 轨压、11 OTP、0x208/0x210 输出测试、0x209 系数、0x207 M1、0x201 设压
 
 运行：python selftest.py
@@ -43,6 +43,11 @@ SLAVE = 1
 # 真机读到的电流原始码：24 位补码 -185938，按 32 位符号扩展后是 0xFFFD29AE
 WORK_RAW = 0xFFFD29AE
 SLEEP_RAW = 0xFFFFF831
+
+# 0xAC 连测 3 次的 6 字节：d0=芯片 Status，后 5 字节按手册 4.3 打包
+RAW1 = [0x00, 0x2A, 0xBC, 0xDF, 0x12, 0x34]
+RAW2 = [0x00, 0x2A, 0xBC, 0xE0, 0x12, 0x35]
+RAW3 = [0x00, 0x2A, 0xBC, 0xE1, 0x12, 0x36]
 
 
 class FakeFirmwareSerial:
@@ -94,7 +99,7 @@ class FakeFirmwareSerial:
     def _results(self) -> list[int]:
         regs = [0] * RESULT_LENGTH
         if self.status:
-            # 固件在失败点立即返回：只有首字有错误码，[1..76] 全 0
+            # 固件在失败点立即返回：只有首字有错误码，[1..88] 全 0
             regs[R_STATUS] = self.status
             return regs
 
@@ -105,9 +110,11 @@ class FakeFirmwareSerial:
         regs[R_WORK_RAW + 1] = (WORK_RAW >> 16) & 0xFFFF
         regs[R_SLEEP_RAW] = SLEEP_RAW & 0xFFFF
         regs[R_SLEEP_RAW + 1] = (SLEEP_RAW >> 16) & 0xFFFF
-        # 0xAC 六字节原始数据：d0=芯片 Status，
-        # 按手册 4.3 打包：电桥 0x2ABCD（正）、温度 0xF1234（负，-0xEDCC）
-        regs[R_RAW:R_RAW + R_RAW_LEN] = [0x00, 0x2A, 0xBC, 0xDF, 0x12, 0x34]
+        # 0xAC 连测 3 次的六字节按顺序连续放；第 1 次要按手册 4.3 打包成
+        # 电桥 0x2ABCD（正）、温度 0xF1234（负，-0xEDCC）
+        regs[R_RAW:R_RAW + R_RAW_LEN] = RAW1
+        regs[R_RAW + R_RAW_LEN:R_RAW + 2 * R_RAW_LEN] = RAW2
+        regs[R_RAW + 2 * R_RAW_LEN:R_RAW + 3 * R_RAW_LEN] = RAW3
         for i in range(COEFF_MAX):
             regs[R_M1 + i] = 0x1000 + i
             regs[R_NOR + i] = 0x1000 + i
@@ -161,7 +168,7 @@ class FakeFirmwareSerial:
             self.send_buf[0] = 1                # 固件先回 1，结果要等 0x401
             self.done_regs = None
             if self.instant:
-                # 立刻测完：IsTaskDone 马上是 0，0x401 返回完整 77 个字
+                # 立刻测完：IsTaskDone 马上是 0，0x401 返回完整 89 个字
                 self.busy = False
                 self.done_regs = self._results()
             else:
@@ -276,7 +283,7 @@ def _():
     assert raw_to_ua(WORK_RAW, 0) == 0    # 没轨压不换算
 
 
-@case("结果帧：77 个寄存器按固件偏移解码")
+@case("结果帧：89 个寄存器按固件偏移解码")
 def _():
     regs = [0] * RESULT_LENGTH
     regs[R_STATUS] = 0
@@ -286,7 +293,9 @@ def _():
     regs[R_WORK_RAW + 1] = WORK_RAW >> 16
     regs[R_SLEEP_RAW] = SLEEP_RAW & 0xFFFF
     regs[R_SLEEP_RAW + 1] = SLEEP_RAW >> 16
-    regs[R_RAW:R_RAW + R_RAW_LEN] = [0x00, 0x2A, 0xBC, 0xDF, 0x12, 0x34]
+    regs[R_RAW:R_RAW + R_RAW_LEN] = RAW1
+    regs[R_RAW + R_RAW_LEN:R_RAW + 2 * R_RAW_LEN] = RAW2
+    regs[R_RAW + 2 * R_RAW_LEN:R_RAW + 3 * R_RAW_LEN] = RAW3
     for i in range(COEFF_MAX):
         regs[R_M1 + i] = 0x1100 + i
         regs[R_NOR + i] = 0x2200 + i
@@ -301,7 +310,8 @@ def _():
     assert result.sleep_code == -1999
     assert 605 < result.work_ua < 612
     assert 6.5 < result.sleep_ua < 6.6, result.sleep_ua
-    assert result.raw == [0x00, 0x2A, 0xBC, 0xDF, 0x12, 0x34]
+    assert result.raw == RAW1
+    assert result.samples == [RAW1, RAW2, RAW3]
     assert result.chip_status == 0x00
     assert result.bridge_code == 0x2ABCD
     assert signed20(result.bridge_code) == 0x2ABCD
@@ -324,7 +334,9 @@ def _():
     result.regs[R_WORK_RAW + 1] = WORK_RAW >> 16
     result.regs[R_SLEEP_RAW] = SLEEP_RAW & 0xFFFF
     result.regs[R_SLEEP_RAW + 1] = SLEEP_RAW >> 16
-    result.regs[R_RAW:R_RAW + R_RAW_LEN] = [0x00, 0x2A, 0xBC, 0xDF, 0x12, 0x34]
+    result.regs[R_RAW:R_RAW + R_RAW_LEN] = RAW1
+    result.regs[R_RAW + R_RAW_LEN:R_RAW + 2 * R_RAW_LEN] = RAW2
+    result.regs[R_RAW + 2 * R_RAW_LEN:R_RAW + 3 * R_RAW_LEN] = RAW3
     for i in range(COEFF_MAX):
         result.regs[R_M1 + i] = 0x1000 + i
         result.regs[R_NOR + i] = 0x1000 + i
@@ -339,7 +351,7 @@ def _():
     assert names[5] == "工作电流（解析）", names
     assert names[6] == "休眠电流原始码", names
     assert names[7] == "休眠电流（解析）", names
-    assert names[8] == "0xAC 原始数据（6 字节）", names
+    assert names[8] == "0xAC 第 1 次（6 字节）", names
     assert names[-1] == "M1 / NOR 系数", names
 
     by_name = {row[0]: row for row in rows}
@@ -350,7 +362,9 @@ def _():
     assert "0xFFFD29AE" in by_name["工作电流原始码"][1]
     assert by_name["工作电流（解析）"][1].endswith("uA")
     assert by_name["工作电流（解析）"][2] == "OK"
-    assert by_name["0xAC 原始数据（6 字节）"][1] == "00 2A BC DF 12 34"
+    assert by_name["0xAC 第 1 次（6 字节）"][1] == "00 2A BC DF 12 34"
+    assert by_name["0xAC 第 2 次（6 字节）"][1] == "00 2A BC E0 12 35"
+    assert by_name["0xAC 第 3 次（6 字节）"][1] == "00 2A BC E1 12 36"
     assert "32 路全部一致" in by_name["M1 / NOR 系数"][1]
 
 
@@ -468,7 +482,7 @@ def _():
     assert status_text(0xE2) == "轨压异常"
 
 
-@case("0x14 整套测试：异步流程与 77 字结果解码")
+@case("0x14 整套测试：异步流程与 89 字结果解码")
 def _():
     fake, tester = make_tester(rail_mv=3298)
     ticks: list[float] = []
@@ -479,7 +493,8 @@ def _():
     assert result.rail_mv == 3298
     assert result.work_raw == WORK_RAW
     assert result.sleep_raw == SLEEP_RAW
-    assert result.raw == [0x00, 0x2A, 0xBC, 0xDF, 0x12, 0x34]
+    assert result.raw == RAW1
+    assert result.samples == [RAW1, RAW2, RAW3]
     assert result.m1[0] == 0x1000 and result.nor[0] == 0x1000
     assert result.coeff_mismatch is None
     assert len(result.regs) == RESULT_LENGTH
