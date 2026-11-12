@@ -630,7 +630,7 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
             out[WF280_R_WORK_RAW + 1] = (uint16_t)(work_code >> 16);
         }
 
-        osDelay(WF280_TEST_MEAS_MS);
+        osDelay(WF280_TEST_MEASURE_MS);
         status = wf280_wait_idle(&bus, 0, 2, WF280_RETRY_COUNT);
         if (status != WF280_STATUS_OK) break;
 
