@@ -444,16 +444,16 @@ uint8_t WF280ReadM1(uint8_t count, uint16_t *out, uint16_t out_lens)
 /* WF280 全套测试（主机写 0x14 触发，完成后从 30000 起读 77 个输入寄存器）。
  *
  * 流程：
- *   1. 开 1.8V，稳定后回读 1.8V 实际轨压 → [1]；
+ *   1. 开 1.8V，稳定后回读 1.8V 轨压 → [1]，随即做短路预检（10mA），命中直接返回；
  *   2. 1.8V 下读 M1 bank（0x80~0x9F）32 路系数；
- *   3. 切 3.3V，稳定后回读 3.3V 实际轨压 → [2]；
+ *   3. 切 3.3V，稳定后回读 3.3V 轨压 → [2]；
  *   4. 3.3V 下读 NOR bank（0x00~0x1F），逐路和 M1 比较；
  *   5. 任何一路不同就写 0xE3 立即返回，不再测电流；
  *   6. 全部一致才测工作电流、0xAC 原始数据、休眠电流；
  *   7. 成功后把两档轨压和 M1/NOR 原始值追加到帧里。
  *
  * 结果帧：
- *   [0]      状态：0=成功，1=I2C 失败，2=NOR 超时，0xE3=系数不一致
+ *   [0]      状态：0=成功，1=I2C 失败，2=NOR 超时，0xE3=系数不一致，0xE1=短路
  *   [1]      1.8V 实测轨压 mV
  *   [2]      3.3V 实测轨压 mV
  *   [3..4]   工作电流原始码（低 16 位在前）
@@ -461,7 +461,9 @@ uint8_t WF280ReadM1(uint8_t count, uint16_t *out, uint16_t out_lens)
  *   [7..12]  0xAC 的 6 字节（Status + 电桥20位 + 温度20位）
  *   [13..44] M1 bank 32 路原始值
  *   [45..76] NOR bank 32 路原始值
- *   失败时只有 [0] 有错误码，[1..76] 全 0。
+ *   失败时只有 [0] 有错误码，[1..76] 全 0；唯一例外是 0xE1 短路
+ *   （只可能在 1.8V 上电预检时命中），它把触发短路的原始码按字节拆到
+ *   [3..6]（低字节在前，同 WF183 的 out[110..113] 写法）。
  */
 void AllTestFor280(uint16_t *out, uint16_t out_lens)
 {
@@ -482,6 +484,7 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
     uint16_t rail_mv;                    // 3.3V 档实测轨压
     uint32_t sleep_code;                 // 休眠电流原始码
     uint32_t work_code = 0;              // 工作电流原始码
+    float curr;                          // 短路预检用的电流值（A）
     uint16_t nor;                        // NOR 系数
     uint8_t nor_mismatch = 0;            // 不一致的路号，0=全部一致
     uint8_t i;                           // 原始数据循环变量
@@ -494,7 +497,7 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
 
 
     // 1、开 1.8V。
-    //    M1 bank（0x80~0x9F）只能在 M1/1.8V 模式下读；本板没有 M1_EN 引脚，
+    //    M1 bank（0x80~0x9F）在 M1/1.8V 模式下读；
     //    用 DAC 输出 1.8V 代替。等 300ms 让 DUT 电源稳定。
     MCP4725_WriteData_Voltage(WF280_SUPPLY_1V8_MV);
     // 等待电压稳定
@@ -503,6 +506,26 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
     // 1.1 1.8V 稳定后先回读实际轨压，占结果帧 [1]。
     //     只做测量，不动供电，也不影响后面 I2C 读 M1。
     rail_1v8_mv = WF280ReadRailMv();
+
+    // 1.2 短路预检：照 WF183 的写法，上电延时到点读一次电流判阈值。
+    //     两处必须跟着 1.8V 改：①这颗板电流通道是反的，读数为负，先取绝对值；
+    //     ②1.8V 满量程只有 15mA，
+    //     183 的 3.3V/0.02A 照抄过来永远够不到，阈值按比例取 0.02A。
+    //     命中就和 183 一样把原始码按字节拆开交上去（183 放 out[110..113]，
+    //     这里放 [3..6]：正常帧它们是工作/休眠电流，短路时这 4 个寄存器
+    //     就是原始码的 4 个字节），然后断电返回。
+    work_code = wf280_read_current();
+    curr = (float)wf280_current_magnitude(work_code) / 8388608.0f * 1.8f / 120.0f;
+    if (curr >= 0.02f) {
+        out[WF280_R_STATUS]       = WF280_STATUS_SHORT;      /* 0xE1 */
+        out[WF280_R_WORK_RAW]     = (uint8_t)(work_code);
+        out[WF280_R_WORK_RAW + 1] = (uint8_t)(work_code >> 8);
+        out[WF280_R_WORK_RAW + 2] = (uint8_t)(work_code >> 16);
+        out[WF280_R_WORK_RAW + 3] = (uint8_t)(work_code >> 24);
+        wf280_restore_adc_config(saved_config);
+        wf280_power_off();
+        return;
+    }
 
     // 2、读 M1 系数（0x80~0x9F，32 路）。
     //    先 0xBA 复位（等 10ms）；复位后再给 50ms 启动时间，然后逐路读。
@@ -604,7 +627,7 @@ void AllTestFor280(uint16_t *out, uint16_t out_lens)
     }
 
     // 6.2 测量完成后一次读 6 字节原始数据：
-    //     [0]=Status，[1..5]=电桥 20 位 + 温度 20 位（按手册 4.3 打包）。
+    //     [0]=Status，[1..5]=电桥 20 位 + 温度 20 位。
     if (status == WF280_STATUS_OK)
         status = wf280_read(&bus, data, WF280_R_RAW_LEN);
     wf280_close(&bus);
